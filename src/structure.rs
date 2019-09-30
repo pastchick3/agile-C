@@ -1,12 +1,12 @@
 #[derive(Debug, PartialEq)]
 pub struct Location {
-    line_no: usize,
-    char_no: usize,
+    pub line_no: usize,
+    pub char_no: usize,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
-    Lexing { error: String, location: Location },
+    Lexing { message: String, location: Location },
 }
 
 #[derive(Debug, PartialEq)]

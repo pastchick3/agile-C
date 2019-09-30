@@ -15,7 +15,7 @@ An C Transpiler with Type Inference
                 | "u" | "v" | "w" | "x" | "y" | "z"
                 | "_" 
 <digit> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
-<escape> ::= "\n" | "\""
+<escape> ::= "\n" | "\"" | "\'"
 <type-specifier> ::= "T" | "void" | "char" | "short" | "int" | "long"
                     | "float" | "double" | "signed" | "unsigned"
 

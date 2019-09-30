@@ -1,5 +1,5 @@
 mod structure;
-mod lexer;
+mod lexing;
 
 pub struct Transpiler {
     source: String,
@@ -14,11 +14,11 @@ impl Transpiler {
 
     pub fn run(&self) -> Result<String, String> {
         let mut errors = Vec::new();
-        let token_stream = Lexer::run(&self.source, &mut errors);
+        let token_stream = lexing::run(&self.source, &mut errors);
         if errors.len() == 0 {
             Ok(format!("{:#?}", token_stream))
         } else {
-            Error(format!("{:#?}", errors))
+            Err(format!("{:#?}", errors))
         }
     }
 }
