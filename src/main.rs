@@ -15,9 +15,12 @@ fn main() {
         eprintln!("Fail to read the input file: {}", err);
         process::exit(1);
     });
-    let transpiler = Transpiler::new(&source);
+    let transpiler = Transpiler::new(&source).unwrap_or_else(|err| {
+        eprintln!("Fail to construct the transpiler: {}", err);
+        process::exit(1);
+    });
     let transformed_source = transpiler.run().unwrap_or_else(|err| {
-        eprintln!("{}", err);
+        eprintln!("Transform failed: {}", err);
         process::exit(1);
     });
     fs::write(&args[2], &transformed_source).unwrap_or_else(|err| {
