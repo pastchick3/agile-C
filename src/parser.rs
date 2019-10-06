@@ -166,11 +166,11 @@ impl<'a> Parser<'a> {
             Some(Token::Break(loc)) => self.parse_statement_break(loc),
             Some(Token::Return(loc)) => self.parse_statement_return(loc),
             Some(Token::LBrace(loc)) => self.parse_statement_block(loc),
-            // Some(Token::While(loc)) => parse_statement_while(loc.clone(), tokens, index, errors),
-            // Some(Token::Do(loc)) => parse_statement_do(loc.clone(), tokens, index, errors),
-            // Some(Token::For(loc)) => parse_statement_for(loc.clone(), tokens, index, errors),
-            // Some(Token::If(loc)) => parse_statement_if(loc.clone(), tokens, index, errors),
-            // Some(Token::Switch(loc)) => parse_statement_switch(loc.clone(), tokens, index, errors),
+            // Some(Token::While(loc)) => parse_statement_while(loc),
+            // Some(Token::Do(loc)) => parse_statement_do(loc),
+            // Some(Token::For(loc)) => parse_statement_for(loc),
+            // Some(Token::If(loc)) => parse_statement_if(loc),
+            // Some(Token::Switch(loc)) => parse_statement_switch(loc),
 
             // Some(type_ @ Token::T(loc))
             // | Some(type_ @ Token::Void(loc))
@@ -181,7 +181,7 @@ impl<'a> Parser<'a> {
             // | Some(type_ @ Token::Float(loc))
             // | Some(type_ @ Token::Double(loc))
             // | Some(type_ @ Token::Signed(loc))
-            // | Some(type_ @ Token::Unsigned(loc)) => parse_statement_def(type_, loc.clone(), tokens, index, errors),
+            // | Some(type_ @ Token::Unsigned(loc)) => parse_statement_def(type_, loc.clone()),
 
             Some(tk) => {
                 self.tokens.push(tk);
