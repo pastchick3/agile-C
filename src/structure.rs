@@ -232,7 +232,7 @@ pub enum Expression<'a> {
     Ident { value: &'a str, location: Location },
     IntConst { value: i128, location: Location },
     FloatingConst { value: f64, location: Location },
-    CharConst { value: char, location: Location },
+    CharConst { value: &'a str, location: Location },
     StrConst { value: &'a str, location: Location },
     Prefix {
         operator: &'a str,
@@ -307,9 +307,9 @@ pub enum Statement<'a> {
         location: Location,
     },
     For {
-        initialization: Expression<'a>,
-        condition: Expression<'a>,
-        increment: Expression<'a>,
+        initialization: Option<Expression<'a>>,
+        condition: Option<Expression<'a>>,
+        increment: Option<Expression<'a>>,
         body: Box<Statement<'a>>,
         location: Location,
     },
@@ -320,8 +320,9 @@ pub enum Statement<'a> {
         location: Location,
     },
     Switch {
-        branches: Vec<(Expression<'a>, Box<Statement<'a>>)>,
-        default: Option<Box<Statement<'a>>>,
+        expression: Expression<'a>,
+        branches: Vec<(Expression<'a>, Vec<Box<Statement<'a>>>)>,
+        default: Option<Vec<Box<Statement<'a>>>>,
         location: Location,
     },
 }
@@ -343,7 +344,7 @@ impl<'a> Locate for Statement<'a> {
             | Do { condition:_, body: _, location }
             | For { initialization:_, condition: _, increment: _, body: _, location }
             | If { condition:_, body: _, alternative: _, location }
-            | Switch { branches:_, default: _, location } => location.clone(),
+            | Switch { expression: _, branches:_, default: _, location } => location.clone(),
         }
     }
 }

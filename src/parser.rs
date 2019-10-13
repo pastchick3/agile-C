@@ -17,7 +17,6 @@ impl<'a> Parser<'a> {
     }
 
     pub fn run(&mut self) -> (Vec<Function<'a>>, Vec<Error>) {
-        self.generic_ast = Some(Vec::new());
         loop {
             match self.tokens.last() {
                 Some(_) => match self.parse_function() {
@@ -54,25 +53,43 @@ impl<'a> Parser<'a> {
         types
     }
 
-    fn assert_semicolon(&mut self, ) -> Result<(), ()> {
+    fn assert_token(&mut self, name: &str) -> Result<(), ()> {
         match self.tokens.pop() {
-            Some(Token::Semicolon(_)) => Ok(()),
             Some(tk) => {
-                self.push_error(&format!("Expect `;`, get `{:?}`", tk), Some(&tk));
-                self.tokens.push(tk);
-                Err(())
+                if format!("{:?}", tk).starts_with(name) {
+                    Ok(())
+                } else {
+                    self.push_error(&format!("Expect `;`, get `{:?}`.", tk), Some(&tk));
+                    self.tokens.push(tk);
+                    Err(())
+                }
             },
             None => {
-                self.push_error("Expect `;`, get EOF", None);
+                self.push_error("Expect `;`, get EOF.", None);
                 Err(())
             },
         }
     }
 
-    fn get_precedence(&self) -> u8 {
+    fn get_prefix_precedence(&self) -> u8 {
         match self.tokens.last() {
-            Some(Token::Plus(_)) => 1,
-            Some(Token::Asterisk(_)) => 2,
+            Some(Token::Plus(_)) => 15,
+            Some(Token::Minus(_)) => 15,
+            Some(Token::BiPlus(_)) => 15,
+            Some(Token::BiMinus(_)) => 15,
+            _ => 0,
+        }
+    }
+
+    fn get_infix_precedence(&self) -> u8 {
+        match self.tokens.last() {
+            Some(Token::Plus(_)) => 12,
+            Some(Token::Minus(_)) => 12,
+            Some(Token::Asterisk(_)) => 13,
+            Some(Token::Slash(_)) => 13,
+            Some(Token::Percent(_)) => 13,
+            // Some(Token::BiPlus(_)) => 16,
+            // Some(Token::BiMinus(_)) => 16,
             _ => 0,
         }
     }
@@ -108,53 +125,58 @@ impl<'a> Parser<'a> {
                 return Err(());
             },
             None => {
-                self.push_error("Expect function name, get EOF", None);
+                self.push_error("Expect function name, get EOF.", None);
                 return Err(());
             },
         };
         match self.tokens.pop() {
             Some(Token::LParen(_)) => {},
             Some(tk) => {
-                self.push_error(&format!("Expect `(`, get `{:?}`", tk), Some(&tk));
+                self.push_error(&format!("Expect `(`, get `{:?}`.", tk), Some(&tk));
                 return Err(());
             },
             None => {
-                self.push_error("Expect `(`, get EOF", None);
+                self.push_error("Expect `(`, get EOF.", None);
                 return Err(());
             },
         }
         let mut parameters = Vec::new();
-        loop {
-            let types = self.parse_types();
-            let name = match self.tokens.pop() {
-                Some(Token::Ident { literal, location }) => {
-                    Expression::Ident {
-                        value: literal,
-                        location,
+        match self.tokens.last() {
+            Some(Token::RParen(_)) => { self.tokens.pop(); },
+            _ => {
+                loop {
+                    let types = self.parse_types();
+                    let name = match self.tokens.pop() {
+                        Some(Token::Ident { literal, location }) => {
+                            Expression::Ident {
+                                value: literal,
+                                location,
+                            }
+                        },
+                        Some(tk) => {
+                            self.push_error(&format!("Expect parameter, get `{:?}.`", tk), Some(&tk));
+                            return Err(());
+                        },
+                        None => {
+                            self.push_error("Expect parameter, get EOF.", None);
+                            return Err(());
+                        },
+                    };
+                    parameters.push((types, name));
+                    match self.tokens.pop() {
+                        Some(Token::Comma(_)) => {},
+                        Some(Token::RParen(_)) => { break },
+                        Some(tk) => {
+                            self.push_error(&format!("Expect `,` or `)`, get `{:?}`.", tk), Some(&tk));
+                            return Err(());
+                        },
+                        None => {
+                            self.push_error("Expect `,` or `)`, get EOF.", None);
+                            return Err(());
+                        },
                     }
-                },
-                Some(tk) => {
-                    self.push_error(&format!("Expect parameter, get `{:?}`", tk), Some(&tk));
-                    return Err(());
-                },
-                None => {
-                    self.push_error("Expect parameter, get EOF", None);
-                    return Err(());
-                },
-            };
-            parameters.push((types, name));
-            match self.tokens.pop() {
-                Some(Token::Comma(_)) => {},
-                Some(Token::RParen(_)) => { break },
-                Some(tk) => {
-                    self.push_error(&format!("Expect `,` or `)`, get `{:?}`", tk), Some(&tk));
-                    return Err(());
-                },
-                None => {
-                    self.push_error("Expect `,` or `)`, get EOF", None);
-                    return Err(());
-                },
-            }
+                }
+            },
         }
         let body = self.parse_statement()?;
         Ok(Function { types, name, parameters, body, location })
@@ -166,22 +188,22 @@ impl<'a> Parser<'a> {
             Some(Token::Break(loc)) => self.parse_statement_break(loc),
             Some(Token::Return(loc)) => self.parse_statement_return(loc),
             Some(Token::LBrace(loc)) => self.parse_statement_block(loc),
-            // Some(Token::While(loc)) => parse_statement_while(loc),
-            // Some(Token::Do(loc)) => parse_statement_do(loc),
-            // Some(Token::For(loc)) => parse_statement_for(loc),
-            // Some(Token::If(loc)) => parse_statement_if(loc),
-            // Some(Token::Switch(loc)) => parse_statement_switch(loc),
+            Some(Token::While(loc)) => self.parse_statement_while(loc),
+            Some(Token::Do(loc)) => self.parse_statement_do(loc),
+            Some(Token::For(loc)) => self.parse_statement_for(loc),
+            Some(Token::If(loc)) => self.parse_statement_if(loc),
+            Some(Token::Switch(loc)) => self.parse_statement_switch(loc),
 
-            // Some(type_ @ Token::T(loc))
-            // | Some(type_ @ Token::Void(loc))
-            // | Some(type_ @ Token::Char(loc))
-            // | Some(type_ @ Token::Short(loc))
-            // | Some(type_ @ Token::Int(loc))
-            // | Some(type_ @ Token::long(loc))
-            // | Some(type_ @ Token::Float(loc))
-            // | Some(type_ @ Token::Double(loc))
-            // | Some(type_ @ Token::Signed(loc))
-            // | Some(type_ @ Token::Unsigned(loc)) => parse_statement_def(type_, loc.clone()),
+            Some(type_ @ Token::T(_))
+            | Some(type_ @ Token::Void(_))
+            | Some(type_ @ Token::Char(_))
+            | Some(type_ @ Token::Short(_))
+            | Some(type_ @ Token::Int(_))
+            | Some(type_ @ Token::Long(_))
+            | Some(type_ @ Token::Float(_))
+            | Some(type_ @ Token::Double(_))
+            | Some(type_ @ Token::Signed(_))
+            | Some(type_ @ Token::Unsigned(_)) => self.parse_statement_def(type_),
 
             Some(tk) => {
                 self.tokens.push(tk);
@@ -189,34 +211,35 @@ impl<'a> Parser<'a> {
             },
 
             None => {
-                self.push_error("Expect statement, get EOF", None);
+                self.push_error("Expect statement, get EOF.", None);
                 Err(())
             },
         }
     }
 
     fn parse_statement_continue(&mut self, location: Location) -> Result<Statement<'a>, ()> {
-        self.assert_semicolon()?;
+        self.assert_token("Semicolon")?;
         Ok(Statement::Continue(location))
     }
 
     fn parse_statement_break(&mut self, location: Location) -> Result<Statement<'a>, ()> {
-        self.assert_semicolon()?;
+        self.assert_token("Semicolon")?;
         Ok(Statement::Break(location))
     }
 
     fn parse_statement_return(&mut self, location: Location) -> Result<Statement<'a>, ()> {
         if let Some(Token::Semicolon(_)) = self.tokens.last() {
+            self.tokens.pop();
             return Ok(Statement::Return { expr: None, location });
         }
-        match self.parse_expression(self.get_precedence()) {
+        match self.parse_expression(self.get_infix_precedence()) {
             Err(_) => {
-                match self.assert_semicolon() {
+                match self.assert_token("Semicolon") {
                     _ => Err(()),
                 }
             },
             Ok(expr) => {
-                match self.assert_semicolon() {
+                match self.assert_token("Semicolon") {
                     Ok(_) => Ok(Statement::Return { expr: Some(expr), location }),
                     Err(_) => Err(()),
                 }
@@ -239,7 +262,7 @@ impl<'a> Parser<'a> {
                     }
                 },
                 None => {
-                    self.push_error("Expect `}`, get EOF", None);
+                    self.push_error("Expect `}`, get EOF.", None);
                     return Err(());
                 },
             }
@@ -247,26 +270,244 @@ impl<'a> Parser<'a> {
         Ok(Statement::Block { statements, location })
     }
 
+    fn parse_statement_while(&mut self, location: Location) -> Result<Statement<'a>, ()> {
+        self.assert_token("LParen")?;
+        let condition = self.parse_expression(self.get_infix_precedence())?;
+        self.assert_token("RParen")?;
+        let body = self.parse_statement()?;
+        Ok(Statement::While {
+            condition,
+            body: Box::new(body),
+            location,
+        })
+    }
+
+    fn parse_statement_do(&mut self, location: Location) -> Result<Statement<'a>, ()> {
+        let body = self.parse_statement()?;
+        self.assert_token("While")?;
+        self.assert_token("LParen")?;
+        let condition = self.parse_expression(self.get_infix_precedence())?;
+        self.assert_token("RParen")?;
+        self.assert_token("Semicolon")?;
+        Ok(Statement::Do {
+            condition,
+            body: Box::new(body),
+            location,
+        })
+    }
+
+    fn parse_statement_for(&mut self, location: Location) -> Result<Statement<'a>, ()> {
+        self.assert_token("LParen")?;
+        let initialization = match self.tokens.last() {
+            Some(Token::Semicolon(loc)) => None,
+            _ => { Some(self.parse_expression(self.get_infix_precedence())?) }
+        };
+        let condition = match self.tokens.last() {
+            Some(Token::Semicolon(loc)) => None,
+            _ => { Some(self.parse_expression(self.get_infix_precedence())?) }
+        };
+        self.assert_token("Semicolon")?;
+        let increment = match self.tokens.last() {
+            Some(Token::Semicolon(loc)) => None,
+            _ => { Some(self.parse_expression(self.get_infix_precedence())?) }
+        };
+        self.assert_token("Semicolon")?;
+        self.assert_token("RParen")?;
+        let body = self.parse_statement()?;
+        Ok(Statement::For {
+            initialization,
+            condition,
+            increment,
+            body: Box::new(body),
+            location,
+        })
+    }
+
+    fn parse_statement_if(&mut self, location: Location) -> Result<Statement<'a>, ()> {
+        self.assert_token("LParen")?;
+        let condition = self.parse_expression(self.get_infix_precedence())?;
+        self.assert_token("RParen")?;
+        let body = self.parse_statement()?;
+        let alternative = match self.tokens.last() {
+            Some(Token::Else(loc)) => {
+                self.tokens.pop();
+                Some(Box::new(self.parse_statement()?))
+            },
+            _ => None,
+        };
+        Ok(Statement::If {
+            condition,
+            body: Box::new(body),
+            alternative,
+            location,
+        })
+    }
+
+    fn parse_statement_switch(&mut self, location: Location) -> Result<Statement<'a>, ()> {
+        self.assert_token("LParen")?;
+        let expression = self.parse_expression(self.get_infix_precedence())?;
+        self.assert_token("RParen")?;
+        self.assert_token("LBrace")?;
+        let mut default = None;
+        let mut branches = Vec::new();
+        loop {
+            match self.tokens.pop() {
+                Some(Token::Case(loc)) => {
+                    let expr = self.parse_expression(self.get_infix_precedence())?;
+                    self.assert_token("Colon")?;
+                    let mut stmts = Vec::new();
+                    loop {
+                        match self.tokens.last() {
+                            Some(Token::Case(_))
+                            | Some(Token::Default(_))
+                            | Some(Token::RBrace(_)) => break,
+                            _ => stmts.push(Box::new(self.parse_statement()?)),
+                        }
+                    }
+                    branches.push((expr, stmts));
+                },
+                Some(Token::Default(loc)) => {
+                    self.assert_token("Colon")?;
+                    let mut stmts = Vec::new();
+                    loop {
+                        match self.tokens.last() {
+                            Some(Token::Case(_))
+                            | Some(Token::Default(_))
+                            | Some(Token::RBrace(_)) => break,
+                            _ => stmts.push(Box::new(self.parse_statement()?)),
+                        }
+                    }
+                    default = Some(stmts);
+                },
+                Some(Token::RBrace(loc)) => break,
+                Some(tk) => {
+                    self.push_error(&format!("Expect `case` or `default`, get `{:?}`.", tk), Some(&tk));
+                    self.tokens.push(tk);
+                    return Err(());
+                },
+                None => {
+                    self.push_error("Expect `case` or `default`, get EOF.", None);
+                    return Err(());
+                },
+            }
+        }
+        Ok(Statement::Switch {
+            expression,
+            branches,
+            default,
+            location,
+        })
+    }
+
+    fn parse_statement_def(&mut self, type_: Token<'a>) -> Result<Statement<'a>, ()> {
+        let location = type_.locate();
+        self.tokens.push(type_);
+        let types = self.parse_types();
+        let mut declarators = Vec::new();
+        match self.tokens.last() {
+            Some(Token::Semicolon(_)) => { self.tokens.pop(); },
+            _ => {
+                loop {
+                    match self.tokens.pop() {
+                        Some(Token::Ident { literal, location }) =>  {
+                            let ident = Expression::Ident { value: literal, location };
+                            if let Some(Token::Equal(_)) = self.tokens.last() {
+                                self.tokens.pop();
+                                let value = self.parse_expression(self.get_infix_precedence())?;
+                                declarators.push((ident, Some(value)));
+                            } else {
+                                declarators.push((ident, None));
+                            }
+                            match self.tokens.pop() {
+                                Some(Token::Comma(_)) => {},
+                                Some(Token::Semicolon(_)) => break,
+                                Some(tk) => self.tokens.push(tk),
+                                None => {},
+                            }
+                        },
+                        Some(tk) => {
+                            self.push_error("Expect Ident, get {:?}.", Some(&tk));
+                            self.tokens.push(tk);
+                            return Err(());
+                        },
+                        None => {
+                            self.push_error("Expect Ident, get EOF.", None);
+                            return Err(());
+                        },
+                    }    
+                }
+            },
+        }
+        Ok(Statement::Def {
+            types,
+            declarators,
+            location,
+        })
+    }
+
     fn parse_statement_expr(&mut self) -> Result<Statement<'a>, ()> {
-        let expr = self.parse_expression(self.get_precedence())?;
-        self.assert_semicolon()?;
+        let expr = self.parse_expression(self.get_infix_precedence())?;
+        self.assert_token("Semicolon")?;
         Ok(Statement::Expr(expr))
     }
 
     fn parse_expression(&mut self, precedence: u8) -> Result<Expression<'a>, ()> {
-        let mut left = match self.tokens.pop() {
-            Some(Token::IntConst { literal, location }) => {
-                Expression::IntConst {
-                    value: literal.parse().unwrap(),
-                    location: location.clone(),
-                }
-            },
-            _ => panic!("!!!"),
-        };
-        while self.get_precedence() != 0 && precedence < self.get_precedence() {
-            left = self.parse_infix(self.get_precedence(), left)?;
+        let mut left = self.parse_prefix()?;
+        println!("{:?} {} {}", left, precedence, self.get_infix_precedence());
+        while self.get_infix_precedence() != 0 && precedence < self.get_infix_precedence() {
+            left = self.parse_infix(self.get_infix_precedence(), left)?;
         }
         return Ok(left);
+    }
+
+    fn parse_prefix(&mut self) -> Result<Expression<'a>, ()> {
+        let precedence = self.get_prefix_precedence();
+        match self.tokens.pop() {
+            Some(Token::Ident { literal, location }) => {
+                Ok(Expression::Ident { value: literal, location })
+            },
+            Some(Token::IntConst { literal, location }) => {
+                Ok(Expression::IntConst { value: literal.parse().unwrap(), location })
+            },
+            Some(Token::FloatingConst { literal, location }) => {
+                Ok(Expression::FloatingConst { value: literal.parse().unwrap(), location })
+            },
+            Some(Token::CharConst { literal, location }) => {
+                Ok(Expression::CharConst { value: literal, location })
+            },
+            Some(Token::StrConst { literal, location }) => {
+                Ok(Expression::StrConst { value: literal, location })
+            },
+            Some(Token::Plus(location)) => {
+                Ok(Expression::Prefix {
+                    operator: "+",
+                    expression: Box::new(self.parse_expression(precedence)?),
+                    location,
+                })
+            },
+            Some(Token::Minus(location)) => {
+                Ok(Expression::Prefix {
+                    operator: "-",
+                    expression: Box::new(self.parse_expression(precedence)?),
+                    location,
+                })
+            },
+            Some(Token::BiPlus(location)) => {
+                Ok(Expression::Prefix {
+                    operator: "++",
+                    expression: Box::new(self.parse_expression(precedence)?),
+                    location,
+                })
+            },
+            Some(Token::BiMinus(location)) => {
+                Ok(Expression::Prefix {
+                    operator: "--",
+                    expression: Box::new(self.parse_expression(precedence)?),
+                    location,
+                })
+            },
+            _ => panic!("!!!"),
+        }
     }
 
     fn parse_infix(&mut self, precedence: u8, left: Expression<'a>) -> Result<Expression<'a>, ()> {
@@ -280,12 +521,48 @@ impl<'a> Parser<'a> {
                     right: Box::new(right),
                 }
             },
+            Some(Token::Minus(_)) => {
+                let right = self.parse_expression(precedence)?;
+                Expression::Infix {
+                    left: Box::new(left),
+                    operator: "-",
+                    right: Box::new(right),
+                }
+            },
             Some(Token::Asterisk(_)) => {
                 let right = self.parse_expression(precedence)?;
                 Expression::Infix {
                     left: Box::new(left),
                     operator: "*",
                     right: Box::new(right),
+                }
+            },
+            Some(Token::Slash(_)) => {
+                let right = self.parse_expression(precedence)?;
+                Expression::Infix {
+                    left: Box::new(left),
+                    operator: "/",
+                    right: Box::new(right),
+                }
+            },
+            Some(Token::Percent(_)) => {
+                let right = self.parse_expression(precedence)?;
+                Expression::Infix {
+                    left: Box::new(left),
+                    operator: "%",
+                    right: Box::new(right),
+                }
+            },
+            Some(Token::BiPlus(_)) => {
+                Expression::Suffix {
+                    operator: "++",
+                    expression: Box::new(left),
+                }
+            },
+            Some(Token::BiPlus(_)) => {
+                Expression::Suffix {
+                    operator: "--",
+                    expression: Box::new(left),
                 }
             },
             _ => panic!("@@@"),
