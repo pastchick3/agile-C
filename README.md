@@ -59,8 +59,8 @@ Agile C mainly consists of 5 components listed as below:
 | --- | --- | --- | --- |
 | Structure | src/structure.rs | 100% | Define all data structures including `Token`, `Expression`, etc. |
 | Lexer | src/lexer.rs| 100% | Transform the source file into a token stream. |
-| Parser | src/parser.rs| 60% | Parse the token stream into AST. Add dummy type parameters if necessary. |
-| Type Resolver | src/type_resolver.rs| 5% | Resolve dummy type parameters to concrete types. |
+| Parser | src/parser.rs| 100% | Parse the token stream into AST. Add dummy type parameters if necessary. |
+| Resolver | src/resolver.rs| 5% | Resolve dummy type parameters to concrete types. |
 | Serializer | src/serializer.rs| 5% | Serialize the AST into a string. |
 
 ## Parsing
@@ -158,7 +158,6 @@ Grammar are excerpted from [C18](https://www.iso.org/standard/74528.html) and re
 <constant-expression> ::= <logical-OR-expression>
 <assignment-expression> ::= <identifier> <assignment-operator> <logical-OR-expression>
 <assignment-operator> ::= "=" | "+=" | "-=" | "*=" | "/=" | "%="
-<expression> ::= <assignment-expression> ["," <assignment-expression>]*
 
 
 <statement> ::= <labeled-statement>

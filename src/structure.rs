@@ -239,22 +239,22 @@ pub enum Expression<'a> {
         expression: Box<Expression<'a>>,
         location: Location,
     },
+    Infix {
+        left: Box<Expression<'a>>,
+        operator: &'a str,
+        right: Box<Expression<'a>>,
+    },
     Suffix {
         operator: &'a str,
         expression: Box<Expression<'a>>,
-    },
-    Call {
-        name: Box<Expression<'a>>,
-        arguments: Vec<Box<Expression<'a>>>,
     },
     Index {
         name: Box<Expression<'a>>,
         index: Box<Expression<'a>>,
     },
-    Infix {
-        left: Box<Expression<'a>>,
-        operator: &'a str,
-        right: Box<Expression<'a>>,
+    Call {
+        name: Box<Expression<'a>>,
+        arguments: Vec<Box<Expression<'a>>>,
     },
 }
 
@@ -270,10 +270,10 @@ impl<'a> Locate for Expression<'a> {
             | StrConst { value: _, location }
             | Prefix { operator: _, expression: _, location } => location.clone(),
 
+            Infix { left, operator: _, right: _ } => left.locate(),
             Suffix { operator: _, expression } => expression.locate(),
             Call { name, arguments: _ } => name.locate(),
             Index { name, index: _ } => name.locate(),
-            Infix { left, operator: _, right: _ } => left.locate(),
         }
     }
 }
