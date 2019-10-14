@@ -61,7 +61,7 @@ Agile C mainly consists of 5 components listed as below:
 | Lexer | src/lexer.rs| 100% | Transform the source file into a token stream. |
 | Parser | src/parser.rs| 100% | Parse the token stream into AST. Add dummy type parameters if necessary. |
 | Resolver | src/resolver.rs| 5% | Resolve dummy type parameters to concrete types. |
-| Serializer | src/serializer.rs| 5% | Serialize the AST into a string. |
+| Serializer | src/serializer.rs| 100% | Serialize the AST into a string. |
 
 ## Parsing
 
@@ -83,6 +83,7 @@ For variable definitions, the parser will maintain a environment object for each
 
 ## TODO
 
+- Parsing of empty statements;
 - Parsing of full variable initialization syntax.
 - Parsing and type inference for the pointer type.
 - Parsing and type inference for the structure type.

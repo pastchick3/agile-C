@@ -274,12 +274,11 @@ impl<'a> Lexer<'a> {
             }
         }
         let literal = self.get_slice();
-        let literal = &literal[1..literal.len()-1];
         match literal {
-            ch if ch.len() == 1 && ch.is_ascii() => Ok(self.make_token("CharConst", literal)),
-            "\\n" | "\\\"" | "\\'"  => Ok(self.make_token("CharConst", literal)),
+            ch if ch.len() == 3 && ch.is_ascii() => Ok(self.make_token("CharConst", literal)),
+            "'\\n'" | "'\\\"'" | "'\\''"  => Ok(self.make_token("CharConst", literal)),
             _ => Err(
-                self.push_error(&format!("Invalid character literal `\'{}\'`.", literal))
+                self.push_error(&format!("Invalid character literal `{}`.", literal))
             ),
         }
     }
@@ -306,7 +305,6 @@ impl<'a> Lexer<'a> {
             }
         }
         let literal = self.get_slice();
-        let literal = &literal[1..literal.len()-1];
         Ok(self.make_token("StrConst", literal))
     }
 
@@ -452,35 +450,35 @@ mod tests {
                 location: Location::new(1, 5),
             },
             CharConst {
-                literal: "\\n",
+                literal: "'\\n'",
                 location: Location::new(1, 9),
             },
             CharConst {
-                literal: "\\\"",
+                literal: "'\\\"'",
                 location: Location::new(1, 14),
             },
             CharConst {
-                literal: "\\'",
+                literal: "'\\''",
                 location: Location::new(1, 19),
             },
             CharConst {
-                literal: "a",
+                literal: "'a'",
                 location: Location::new(1, 24),
             },
             StrConst {
-                literal: "\\n",
+                literal: "\"\\n\"",
                 location: Location::new(1, 28),
             },
             StrConst {
-                literal: "\\\"",
+                literal: "\"\\\"\"",
                 location: Location::new(1, 33),
             },
             StrConst {
-                literal: "\\'",
+                literal: "\"\\'\"",
                 location: Location::new(1, 38),
             },
             StrConst {
-                literal: "a",
+                literal: "\"a\"",
                 location: Location::new(1, 43),
             },
         ];

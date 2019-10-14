@@ -1,31 +1,28 @@
-use super::branched_parser::Statement;
-use super::branched_parser::Type;
+use crate::structure::{ Error, Function };
 
-pub struct TypeResolver {}
+pub struct Resolver<'a> {
+    generic_ast: Vec<Function<'a>>,
+    errors: Option<Vec<Error>>,
+    ast: Option<Vec<Function<'a>>>,
+}
 
-impl TypeResolver {
-    pub fn new() -> TypeResolver {
-        TypeResolver {}
+impl<'a> Resolver<'a> {
+    pub fn new(generic_ast: Vec<Function<'a>>, errors: Vec<Error>) -> Resolver {
+        Resolver {
+            generic_ast,
+            errors: Some(errors),
+            ast: Some(Vec::new()),
+        }
     }
 
-    pub fn run<'a>(&self, generic_ast: Vec<Statement<'a>>) -> Vec<Statement<'a>> {
-        let mut ast = Vec::new();
-        for stmt in generic_ast.into_iter() {
-            ast.push(self.resolve_stmt(stmt));
+    pub fn run(&mut self) -> (Vec<Function<'a>>, Vec<Error>) {
+        loop {
+            match self.generic_ast.pop() {
+                Some(func) => self.ast.as_mut().unwrap().push(func),
+                None => break,
+            }
         }
-        ast
-    }
-
-    fn resolve_stmt<'a>(&self, stmt: Statement<'a>) -> Statement<'a> {
-        match stmt {
-            Statement::Def { type_, ident, value } => {
-                match type_ {
-                    Type::Var { line_no, char_no } => Statement::Def { type_: Type::Long { line_no, char_no }, ident, value },
-                    Type::Int { line_no, char_no } => Statement::Def { type_: Type::Int { line_no, char_no }, ident, value },
-                    Type::Long { line_no, char_no } => Statement::Def { type_: Type::Long { line_no, char_no }, ident, value },
-                }
-            },
-            s => s,
-        }
+        self.ast.as_mut().unwrap().reverse();
+        (self.ast.take().unwrap(), self.errors.take().unwrap())
     }
 }

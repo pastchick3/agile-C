@@ -1,9 +1,13 @@
 mod structure;
 mod lexer;
 mod parser;
+mod resolver;
+mod serializer;
 
 use lexer::Lexer;
 use parser::Parser;
+use resolver::Resolver;
+use serializer::Serializer;
 
 pub struct Transpiler {
     source: String,
@@ -22,8 +26,10 @@ impl Transpiler {
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&self.source, errors).run();
         let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        let (ast, errors) = Resolver::new(generic_ast, errors).run();
+        let transformed_source = Serializer::new(ast).run();
         if errors.len() == 0 {
-            Ok(format!("{:#?}", generic_ast))
+            Ok(transformed_source)
         } else {
             Err(format!("{:#?}", errors))
         }

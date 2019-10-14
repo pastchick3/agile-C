@@ -1431,13 +1431,13 @@ int f() { return 1;}";
                         )),
                         Box::new(Statement::Expr(
                             Expression::CharConst {
-                                value: "b",
+                                value: "'b'",
                                 location: Location::new(1, 22),
                             }
                         )),
                         Box::new(Statement::Expr(
                             Expression::StrConst {
-                                value: "c",
+                                value: "\"c\"",
                                 location: Location::new(1, 27),
                             }
                         )),
