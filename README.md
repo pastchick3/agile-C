@@ -38,7 +38,7 @@ double func(double a) {
 
 ## Quick Start
 
-Agile C is written in pure [Rust](https://www.rust-lang.org/), and is distributed as a single binary named `agile_c.exe` (not currently available). The program takes 2 positional arguments. The first one is the path to the input C file, and the second one is the path to the output C file. An example command is shown below.
+Agile C is written in pure [Rust](https://www.rust-lang.org/), and is distributed as a single binary named `agile_c.exe` (in the root directory). The program takes 2 positional arguments. The first one is the path to the input C file, and the second one is the path to the output C file. An example command is shown below.
 
 ```
 .\agile_c.exe ..\test_c\input.c ..\test_c\output.c
