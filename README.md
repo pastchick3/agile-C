@@ -79,7 +79,9 @@ For variable definitions, the parser will maintain a environment object for each
 
 [Introduction to first order type systems](http://lucacardelli.name/Papers/TypeSystems.pdf)
 
-![rules](https://raw.githubusercontent.com/pastchick3/agile-C/master/rules.png)
+![rules1](https://raw.githubusercontent.com/pastchick3/agile-C/master/rules1.png)
+
+![rules2](https://raw.githubusercontent.com/pastchick3/agile-C/master/rules2.png)
 
 ## TODO
 
