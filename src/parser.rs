@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use indexmap::IndexMap;
+
 use crate::structure::{ Location, Locate, Error, Token, Type, Expression, Statement, Function };
 
 struct Environment {
@@ -67,28 +69,24 @@ impl<'a> Parser<'a> {
         (self.generic_ast.take().unwrap(), self.errors.take().unwrap())
     }
 
-    fn parse_types(&mut self) -> Vec<Type> {
-        let mut types = Vec::new();
-        loop {
-            match self.tokens.pop() {
-                Some(Token::T(loc)) => types.push(Type::T(loc)),
-                Some(Token::Void(loc)) => types.push(Type::Void(loc)),
-                Some(Token::Char(loc)) => types.push(Type::Char(loc)),
-                Some(Token::Short(loc)) => types.push(Type::Short(loc)),
-                Some(Token::Int(loc)) => types.push(Type::Int(loc)),
-                Some(Token::Long(loc)) => types.push(Type::Long(loc)),
-                Some(Token::Float(loc)) => types.push(Type::Float(loc)),
-                Some(Token::Double(loc)) => types.push(Type::Double(loc)),
-                Some(Token::Signed(loc)) => types.push(Type::Signed(loc)),
-                Some(Token::Unsigned(loc)) => types.push(Type::Unsigned(loc)),
-                Some(tk) => { self.tokens.push(tk); break },
-                None => break,
-            }
+    fn parse_type(&mut self) -> Type {
+        match self.tokens.pop() {
+            Some(Token::T(loc)) => Type::T(loc),
+            Some(Token::Void(loc)) => Type::Void(loc),
+            Some(Token::Char(loc)) => Type::Char(loc),
+            Some(Token::Short(loc)) => Type::Short(loc),
+            Some(Token::Int(loc)) => Type::Int(loc),
+            Some(Token::Long(loc)) => Type::Long(loc),
+            Some(Token::Float(loc)) => Type::Float(loc),
+            Some(Token::Double(loc)) => Type::Double(loc),
+            Some(Token::Signed(loc)) => Type::Signed(loc),
+            Some(Token::Unsigned(loc)) => Type::Unsigned(loc),
+            Some(tk) => {
+                self.tokens.push(tk);
+                Type::T(Location::empty())
+            },
+            None => Type::T(Location::empty()),
         }
-        if types.len() == 0 {
-            types.push(Type::T(Location::empty()));
-        }
-        types
     }
 
     fn assert_token(&mut self, name: &str) -> Result<(), ()> {
@@ -168,14 +166,9 @@ impl<'a> Parser<'a> {
             Some(tk) => tk.locate(),
             None => Location::empty(),
         };
-        let types = self.parse_types();
+        let type_ = self.parse_type();
         let name = match self.tokens.pop() {
-            Some(Token::Ident { literal, location }) => {
-                Expression::Ident {
-                    value: literal,
-                    location: location.clone(),
-                }
-            },
+            Some(Token::Ident { literal, location: _ }) => literal,
             Some(tk) => {
                 self.push_error(&format!("Expect function name, get `{:?}`.", tk), Some(&tk));
                 return Err(());
@@ -196,19 +189,16 @@ impl<'a> Parser<'a> {
                 return Err(());
             },
         }
-        let mut parameters = Vec::new();
+        let mut parameters = IndexMap::new();
         match self.tokens.last() {
             Some(Token::RParen(_)) => { self.tokens.pop(); },
             _ => {
                 loop {
-                    let types = self.parse_types();
+                    let type_ = self.parse_type();
                     let name = match self.tokens.pop() {
-                        Some(Token::Ident { literal, location }) => {
+                        Some(Token::Ident { literal, location: _ }) => {
                             self.environment.define(literal);
-                            Expression::Ident {
-                                value: literal,
-                                location,
-                            }
+                            literal
                         },
                         Some(tk) => {
                             self.push_error(&format!("Expect parameter, get `{:?}.`", tk), Some(&tk));
@@ -219,7 +209,7 @@ impl<'a> Parser<'a> {
                             return Err(());
                         },
                     };
-                    parameters.push((types, name));
+                    parameters.insert(name, type_);
                     match self.tokens.pop() {
                         Some(Token::Comma(_)) => {},
                         Some(Token::RParen(_)) => { break },
@@ -237,7 +227,7 @@ impl<'a> Parser<'a> {
         }
         let body = self.parse_statement()?;
         self.environment.leave();
-        Ok(Function { types, name, parameters, body, location })
+        Ok(Function { type_, name, parameters, body, location })
     }
 
     fn parse_statement(&mut self) -> Result<Statement<'a>, ()> {
@@ -462,7 +452,7 @@ impl<'a> Parser<'a> {
     fn parse_statement_def(&mut self, type_: Token<'a>) -> Result<Statement<'a>, ()> {
         let location = type_.locate();
         self.tokens.push(type_);
-        let types = self.parse_types();
+        let type_ = self.parse_type();
         let mut declarators = Vec::new();
         match self.tokens.last() {
             Some(Token::Semicolon(_)) => { self.tokens.pop(); },
@@ -500,7 +490,7 @@ impl<'a> Parser<'a> {
             },
         }
         Ok(Statement::Def {
-            types,
+            type_,
             declarators,
             location,
         })
@@ -516,9 +506,9 @@ impl<'a> Parser<'a> {
                         if !self.environment.is_defined(value) {
                             self.environment.define(value);
                             Ok(Statement::Def {
-                                types: vec![Type::T(Location::empty())],
+                                type_: Type::T(Location::empty()),
                                 declarators: vec![(
-                                    Expression::Ident { value, location: location.clone() },
+                                    Expression::Ident { value, location },
                                     Some(*right),
                                 )],
                                 location,
@@ -844,21 +834,16 @@ mod tests {
     
     #[test]
     fn function_empty() {
-        let source = "int f() {}";
+        let source = "T f() {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::T(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![],
-                    location: Location::new(1, 9),
+                    location: Location::new(1, 7),
                 },
                 location: Location::new(1, 1),
             },
@@ -873,33 +858,20 @@ mod tests {
 
     #[test]
     fn function_single() {
-        let source = "int f(int a) { continue; }";
+        let source = "void f(int a) { continue; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![
-                    (
-                        vec![
-                            Type::Int(Location::new(1, 7)),
-                        ],
-                        Expression::Ident {
-                            value: "a",
-                            location: Location::new(1, 11),
-                        },
-                    ),
-                ],
+                type_: Type::Void(Location::new(1, 1)),
+                name: "f",
+                parameters: [
+                    ("a", Type::Int(Location::new(1, 8))),
+                ].iter().cloned().collect(),
                 body: Statement::Block {
                     statements: vec![
-                        Box::new(Statement::Continue(Location::new(1, 16))),
+                        Box::new(Statement::Continue(Location::new(1, 17))),
                     ],
-                    location: Location::new(1, 14),
+                    location: Location::new(1, 15),
                 },
                 location: Location::new(1, 1),
             },
@@ -914,68 +886,33 @@ mod tests {
 
     #[test]
     fn function_multiple() {
-        let source = "int f() {}
-T void char short int long float double signed unsigned f(int a, int b) { continue; break; }";
+        let source = "short f() {}
+int f(long a, float b) { continue; break; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Short(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![],
-                    location: Location::new(1, 9),
+                    location: Location::new(1, 11),
                 },
                 location: Location::new(1, 1),
             },
             Function {
-                types: vec![
-                    Type::T(Location::new(2, 1)),
-                    Type::Void(Location::new(2, 3)),
-                    Type::Char(Location::new(2, 8)),
-                    Type::Short(Location::new(2, 13)),
-                    Type::Int(Location::new(2, 19)),
-                    Type::Long(Location::new(2, 23)),
-                    Type::Float(Location::new(2, 28)),
-                    Type::Double(Location::new(2, 34)),
-                    Type::Signed(Location::new(2, 41)),
-                    Type::Unsigned(Location::new(2, 48)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(2, 57),
-                },
-                parameters: vec![
-                    (
-                        vec![
-                            Type::Int(Location::new(2, 59)),
-                        ],
-                        Expression::Ident {
-                            value: "a",
-                            location: Location::new(2, 63),
-                        },
-                    ),
-                    (
-                        vec![
-                            Type::Int(Location::new(2, 66)),
-                        ],
-                        Expression::Ident {
-                            value: "b",
-                            location: Location::new(2, 70),
-                        },
-                    ),
-                ],
+                type_: Type::Int(Location::new(2, 1)),
+                name: "f",
+                parameters: [
+                    ("a", Type::Long(Location::new(2, 7))),
+                    ("b", Type::Float(Location::new(2, 15))),
+                ].iter().cloned().collect(),
                 body: Statement::Block {
                     statements: vec![
-                        Box::new(Statement::Continue(Location::new(2, 75))),
-                        Box::new(Statement::Break(Location::new(2, 85))),
+                        Box::new(Statement::Continue(Location::new(2, 26))),
+                        Box::new(Statement::Break(Location::new(2, 36))),
                     ],
-                    location: Location::new(2, 73),
+                    location: Location::new(2, 24),
                 },
                 location: Location::new(2, 1),
             },
@@ -990,50 +927,40 @@ T void char short int long float double signed unsigned f(int a, int b) { contin
 
     #[test]
     fn statement_return() {
-        let source = "int f() { return;}
-int f() { return 1;}";
+        let source = "double f() { return;}
+signed f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Double(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Return {
                             expr: None,
-                            location: Location::new(1, 11),
+                            location: Location::new(1, 14),
                         }),
                     ],
-                    location: Location::new(1, 9),
+                    location: Location::new(1, 12),
                 },
                 location: Location::new(1, 1),
             },
             Function {
-                types: vec![
-                    Type::Int(Location::new(2, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(2, 5),
-                },
-                parameters: vec![],
+                type_: Type::Signed(Location::new(2, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Return {
                             expr: Some(Expression::IntConst {
                                 value: 1,
-                                location: Location::new(2, 18),
+                                location: Location::new(2, 21),
                             }),
-                            location: Location::new(2, 11),
+                            location: Location::new(2, 14),
                         }),
                     ],
-                    location: Location::new(2, 9),
+                    location: Location::new(2, 12),
                 },
                 location: Location::new(2, 1),
             },
@@ -1048,47 +975,40 @@ int f() { return 1;}";
 
     #[test]
     fn statement_def() {
-        let source = "int f() { int a = 1, b; }";
+        let source = "unsigned f() { int a = 1, b; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Unsigned(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Def {
-                            types: vec![
-                                Type::Int(Location::new(1, 11)),
-                            ],
+                            type_: Type::Int(Location::new(1, 16)),
                             declarators: vec![
                                 (
                                     Expression::Ident {
                                         value: "a",
-                                        location: Location::new(1, 15),
+                                        location: Location::new(1, 20),
                                     },
                                     Some(Expression::IntConst {
                                         value: 1,
-                                        location: Location::new(1, 19),
+                                        location: Location::new(1, 24),
                                     }),
                                 ),
                                 (
                                     Expression::Ident {
                                         value: "b",
-                                        location: Location::new(1, 22),
+                                        location: Location::new(1, 27),
                                     },
                                     None,
                                 ),
                             ],
-                            location: Location::new(1, 11),
+                            location: Location::new(1, 16),
                         }),
                     ],
-                    location: Location::new(1, 9),
+                    location: Location::new(1, 14),
                 },
                 location: Location::new(1, 1),
             },
@@ -1107,14 +1027,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::While {
@@ -1145,14 +1060,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Do {
@@ -1183,14 +1093,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::For {
@@ -1223,14 +1128,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::If {
@@ -1262,14 +1162,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::If {
@@ -1301,14 +1196,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Switch {
@@ -1350,14 +1240,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Switch {
@@ -1401,14 +1286,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Expr(
@@ -1461,14 +1341,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Expr(
@@ -1560,14 +1435,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Expr(
@@ -1638,14 +1508,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Expr(
@@ -1735,24 +1600,11 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::T(Location::empty()),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 1),
-                },
-                parameters: vec![
-                    (
-                        vec![
-                            Type::T(Location::empty()),
-                        ],
-                        Expression::Ident {
-                            value: "a",
-                            location: Location::new(1, 3),
-                        },
-                    ),
-                ],
+                type_: Type::T(Location::new(0, 0)),
+                name: "f",
+                parameters: [
+                    ("a", Type::T(Location::empty())),
+                ].iter().cloned().collect(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Expr(
@@ -1769,11 +1621,7 @@ int f() { return 1;}";
                             },
                         )),
                         Box::new(Statement::Def {
-                            types: vec![
-                                Type::T(
-                                    Location::empty(),
-                                ),
-                            ],
+                            type_: Type::T(Location::empty()),
                             declarators: vec![
                                 (
                                     Expression::Ident {
@@ -1810,14 +1658,9 @@ int f() { return 1;}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
-                types: vec![
-                    Type::Int(Location::new(1, 1)),
-                ],
-                name: Expression::Ident {
-                    value: "f",
-                    location: Location::new(1, 5),
-                },
-                parameters: vec![],
+                type_: Type::Int(Location::new(1, 1)),
+                name: "f",
+                parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
                         Box::new(Statement::Expr(

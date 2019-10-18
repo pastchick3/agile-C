@@ -1,10 +1,12 @@
+use indexmap::IndexMap;
+
 /* * * * * * * * * *
  * Utilities
  * 
  * * * * * * * * * *
  */
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Location {
     pub line_no: usize,
     pub char_no: usize,
@@ -28,6 +30,7 @@ pub trait Locate {
 pub enum Error {
     Lexing { message: String, location: Location },
     Parsing { message: String, location: Location },
+    Resolving { message: String, location: Location },
 }
 
 /* * * * * * * * * *
@@ -41,8 +44,9 @@ impl Locate for Error {
         use Error::*;
 
         match self {
-            Lexing { message: _, location } => location.clone(),
-            Parsing { message: _, location } => location.clone(),
+            Lexing { message: _, location } => *location,
+            Parsing { message: _, location } => *location,
+            Resolving { message: _, location } => *location,
         }
     }
 }
@@ -125,7 +129,7 @@ impl<'a> Locate for Token<'a> {
             | IntConst { literal: _, location }
             | FloatingConst { literal: _, location }
             | CharConst { literal: _, location }
-            | StrConst { literal: _, location } => location.clone(),
+            | StrConst { literal: _, location } => *location,
             
             T(loc)
             | Void(loc)
@@ -184,7 +188,7 @@ impl<'a> Locate for Token<'a> {
 
             | Comma(loc)
             | Colon(loc)
-            | Semicolon(loc) => loc.clone(),
+            | Semicolon(loc) => *loc,
         }
     }
 }
@@ -195,7 +199,7 @@ impl<'a> Locate for Token<'a> {
  * * * * * * * * * *
  */
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Type {
     T(Location),
     Void(Location),
@@ -222,7 +226,7 @@ impl Locate for Type {
             | Float(loc)
             | Double(loc)
             | Signed(loc)
-            | Unsigned(loc) => loc.clone(),
+            | Unsigned(loc) => *loc,
         }
     }
 }
@@ -268,7 +272,7 @@ impl<'a> Locate for Expression<'a> {
             | FloatingConst { value: _, location }
             | CharConst { value: _, location }
             | StrConst { value: _, location }
-            | Prefix { operator: _, expression: _, location } => location.clone(),
+            | Prefix { operator: _, expression: _, location } => *location,
 
             Infix { left, operator: _, right: _ } => left.locate(),
             Suffix { operator: _, expression } => expression.locate(),
@@ -292,7 +296,7 @@ pub enum Statement<'a> {
         location: Location,
     },
     Def {
-        types: Vec<Type>,
+        type_: Type,
         declarators: Vec<(Expression<'a>, Option<Expression<'a>>)>,
         location: Location,
     },
@@ -333,33 +337,33 @@ impl<'a> Locate for Statement<'a> {
 
         match self {
             Continue(loc)
-            | Break(loc) => loc.clone(),
+            | Break(loc) => *loc,
 
             Expr(expr) => expr.locate(),
 
             Return { expr: _, location }
             | Block { statements: _, location }
-            | Def { types: _, declarators: _, location }
+            | Def { type_: _, declarators: _, location }
             | While { condition: _, body: _, location }
             | Do { condition:_, body: _, location }
             | For { initialization:_, condition: _, increment: _, body: _, location }
             | If { condition:_, body: _, alternative: _, location }
-            | Switch { expression: _, branches:_, default: _, location } => location.clone(),
+            | Switch { expression: _, branches:_, default: _, location } => *location,
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Function<'a> {
-    pub types: Vec<Type>,
-    pub name: Expression<'a>,
-    pub parameters: Vec<(Vec<Type>, Expression<'a>)>,
+    pub type_: Type,
+    pub name: &'a str,
+    pub parameters: IndexMap<&'a str, Type>,
     pub body: Statement<'a>,
     pub location: Location,
 }
 
 impl<'a> Locate for Function<'a> {
     fn locate(&self) -> Location {
-        self.location.clone()
+        self.location
     }
 }
