@@ -44,16 +44,15 @@ impl<'a> Serializer<'a> {
     }
 
     fn serialize_function(&mut self, func: Function<'a>) {
-        let Function { types, name, parameters, body, location: _ } = func;
-        self.serialize_types(types);
-        self.serialize_expression(name);
+        let Function { type_, name, parameters, body, location: _ } = func;
+        self.serialize_type(type_);
+        self.push_str_space(name);
         self.pop_char();
         self.push_str("(");
         if !parameters.is_empty() {
-            for (types, param) in parameters.into_iter() {
-                self.serialize_types(types);
-                self.serialize_expression(param);
-                self.pop_char();
+            for (param, type_) in parameters.into_iter() {
+                self.serialize_type(type_);
+                self.push_str(param);
                 self.push_str_space(",");
             }
             self.pop_char();
@@ -63,20 +62,18 @@ impl<'a> Serializer<'a> {
         self.serialize_statement(body);
     }
 
-    fn serialize_types(&mut self, types: Vec<Type>) {
-        for type_ in types.into_iter() {
-            match type_ {
-                Type::T(_) => self.push_str_space("T"),
-                Type::Void(_) => self.push_str_space("void"),
-                Type::Char(_) => self.push_str_space("char"),
-                Type::Short(_) => self.push_str_space("short"),
-                Type::Int(_) => self.push_str_space("int"),
-                Type::Long(_) => self.push_str_space("long"),
-                Type::Float(_) => self.push_str_space("float"),
-                Type::Double(_) => self.push_str_space("double"),
-                Type::Signed(_) => self.push_str_space("signed"),
-                Type::Unsigned(_) => self.push_str_space("unsigned"),
-            }
+    fn serialize_type(&mut self, type_: Type) {
+        match type_ {
+            Type::T(_) => self.push_str_space("T"),
+            Type::Void(_) => self.push_str_space("void"),
+            Type::Char(_) => self.push_str_space("char"),
+            Type::Short(_) => self.push_str_space("short"),
+            Type::Int(_) => self.push_str_space("int"),
+            Type::Long(_) => self.push_str_space("long"),
+            Type::Float(_) => self.push_str_space("float"),
+            Type::Double(_) => self.push_str_space("double"),
+            Type::Signed(_) => self.push_str_space("signed"),
+            Type::Unsigned(_) => self.push_str_space("unsigned"),
         }
     }
 
@@ -164,8 +161,8 @@ impl<'a> Serializer<'a> {
                 self.push_str(&" ".repeat(self.ident_level*4));
                 self.push_str_newline("}");
             },
-            Statement::Def { types, declarators, location: _ } => {
-                self.serialize_types(types);
+            Statement::Def { type_, declarators, location: _ } => {
+                self.serialize_type(type_);
                 for (ident, init) in declarators.into_iter() {
                     self.serialize_expression(ident);
                     match init {
@@ -322,8 +319,8 @@ mod tests {
 
     #[test]
     fn function_multiple() {
-        let source = "T void char short int long float double signed unsigned f(int a, float b) {}";
-        let expected_transformed_source = "T void char short int long float double signed unsigned f(int a, float b) {}\n";
+        let source = "int f(int a, float b) {}";
+        let expected_transformed_source = "int f(int a, float b) {}\n";
 
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
