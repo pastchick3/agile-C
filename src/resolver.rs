@@ -46,11 +46,6 @@ impl<'a> SymbolTable<'a> {
         *return_type
     }
 
-    fn get_parameters(&self) -> &IndexMap<&'a str, Type> {
-        let (_, parameters) = self.functions.get(self.current_func).unwrap();
-        parameters
-    }
-
     fn update_return_type(&mut self, return_type: Type) {
         let (_, parameters) = self.functions.remove(self.current_func).unwrap();
         self.functions.insert(self.current_func, (return_type, parameters));
@@ -196,7 +191,18 @@ impl<'a> Resolver<'a> {
     fn resolve_function(&mut self, func: Function<'a>) -> Function<'a> {
         let Function { type_, name, parameters, body, location } = func;
         self.symbol_table.current_func = name;
+        self.symbol_table.enter();
+        for (param, type_) in parameters.iter() {
+            self.symbol_table.insert(param, *type_);
+        }
         let body = self.resolve_statement(body);
+        let mut new_parameters = IndexMap::new();
+        for param in parameters.keys() {
+            let type_ = self.symbol_table.get(param).unwrap();
+            new_parameters.insert(*param, type_);
+        }
+        self.symbol_table.update_parameters(new_parameters);
+        self.symbol_table.leave();
         Function { type_, name, parameters, body, location }
     }
 
@@ -205,7 +211,7 @@ impl<'a> Resolver<'a> {
             st @ Statement::Continue(_) => st,
             st @ Statement::Break(_) => st,
             Statement::Expr(expr) => {
-                let (types, expr) = self.resolve_expression(expr);
+                let (_, expr) = self.resolve_expression(expr);
                 Statement::Expr(expr)
             },
             Statement::Return { expr, location } => {
@@ -218,7 +224,7 @@ impl<'a> Resolver<'a> {
                 };
                 let return_type = self.symbol_table.get_return_type();
                 match self.unify_types(return_type, type_) {
-                    Ok((return_type, type_)) => self.symbol_table.update_return_type(return_type),
+                    Ok((return_type, _)) => self.symbol_table.update_return_type(return_type),
                     Err(_) => {
                         let message = format!("`{:?}` is expected to return `{:?}`, get `{:?}`.",
                                         self.symbol_table.current_func, return_type, type_);
@@ -227,183 +233,214 @@ impl<'a> Resolver<'a> {
                 }
                 Statement::Return { expr, location }
             },
-        //     Statement::Block { statements, location: _ } => {
-        //         self.push_str_newline("{");
-        //         self.ident_level += 1;
-        //         if statements.is_empty() {
-        //             self.pop_char();
-        //         } else {
-        //             for st in statements.into_iter() {
-        //                 self.serialize_statement(*st);
-        //             }
-        //         }
-        //         self.ident_level -= 1;
-        //         self.push_str(&" ".repeat(self.ident_level*4));
-        //         self.push_str_newline("}");
-        //     },
-        //     Statement::Def { types, declarators, location: _ } => {
-        //         self.serialize_types(types);
-        //         for (ident, init) in declarators.into_iter() {
-        //             self.serialize_expression(ident);
-        //             match init {
-        //                 Some(ex) => {
-        //                     self.push_str_space("=");
-        //                     self.serialize_expression(ex);
-        //                 },
-        //                 None => {},
-        //             }
-        //             self.pop_char();
-        //             self.push_str_space(",");
-        //         }
-        //         self.pop_char();
-        //         self.pop_char();
-        //         self.push_str_newline(";")
-        //     },
-        //     Statement::While { condition, body, location: _ } => {
-        //         self.push_str_space("while");
-        //         self.push_str("(");
-        //         self.serialize_expression(condition);
-        //         self.pop_char();
-        //         self.push_str_space(")");
-        //         self.serialize_statement(*body);
-        //     },
-        //     Statement::Do { condition, body, location: _ } => {
-        //         self.push_str_space("do");
-        //         self.serialize_statement(*body);
-        //         self.pop_char();
-        //         self.push_str(" ");
-        //         self.push_str_space("while");
-        //         self.push_str("(");
-        //         self.serialize_expression(condition);
-        //         self.pop_char();
-        //         self.push_str(")");
-        //         self.push_str_newline(";");
-        //     },
-        //     Statement::For { initialization, condition, increment, body, location: _ } => {
-        //         self.push_str_space("for");
-        //         self.push_str("(");
-        //         match initialization {
-        //             Some(ex) => {
-        //                 self.serialize_expression(ex);
-        //                 self.pop_char();
-        //             },
-        //             None => self.push_str_space(""),
-        //         }
-        //         self.push_str_space(";");
-        //         match condition {
-        //             Some(ex) => {
-        //                 self.serialize_expression(ex);
-        //                 self.pop_char();
-        //             },
-        //             None => {},
-        //         }
-        //         self.push_str_space(";");
-        //         match increment {
-        //             Some(ex) => {
-        //                 self.serialize_expression(ex);
-        //                 self.pop_char();
-        //             },
-        //             None => {},
-        //         }
-        //         self.push_str_space(")");
-        //         self.serialize_statement(*body);
-        //     },
-        //     Statement::If { condition, body, alternative, location: _ } => {
-        //         self.push_str_space("if");
-        //         self.push_str("(");
-        //         self.serialize_expression(condition);
-        //         self.pop_char();
-        //         self.push_str_space(")");
-        //         self.serialize_statement(*body);
-        //         match alternative {
-        //             Some(st) => {
-        //                 self.pop_char();
-        //                 self.push_str_space(" else");
-        //                 self.serialize_statement(*st);
-        //             },
-        //             None => {},
-        //         }
-        //     },
-        //     Statement::Switch { expression, branches, default, location: _ } => {
-        //         self.push_str_space("switch");
-        //         self.push_str("(");
-        //         self.serialize_expression(expression);
-        //         self.pop_char();
-        //         self.push_str_space(")");
-        //         self.push_str_newline("{");
-        //         self.ident_level += 1;
-        //         for (label, sts) in branches.into_iter() {
-        //             self.push_str(&" ".repeat(self.ident_level*4));
-        //             self.push_str_space("case");
-        //             self.serialize_expression(label);
-        //             self.pop_char();
-        //             self.push_str_newline(":");
-        //             self.ident_level += 1;
-        //             for st in sts.into_iter() {
-        //                 self.serialize_statement(*st);
-        //             }
-        //             self.ident_level -= 1;
-        //         }
-        //         match default {
-        //             Some(sts) => {
-        //                 self.push_str(&" ".repeat(self.ident_level*4));
-        //                 self.push_str_newline("default:");
-        //                 self.ident_level += 1;
-        //                 for st in sts.into_iter() {
-        //                     self.serialize_statement(*st);
-        //                 }
-        //                 self.ident_level -= 1;
-        //             },
-        //             None => {},
-        //         }
-        //         self.ident_level -= 1;
-        //         self.push_str(&" ".repeat(self.ident_level*4));
-        //         self.push_str_newline("}");
-        //     },
-            _ => panic!("STMT"),
+            Statement::Block { statements, location } => {
+                let mut sts = Vec::new();
+                self.symbol_table.enter();
+                for st in statements.into_iter() {
+                    sts.push(Box::new(self.resolve_statement(*st)));
+                }
+                self.symbol_table.leave();
+                Statement::Block { statements: sts, location }
+            },
+            Statement::Def { type_, declarators, location } => {
+                let mut decls = Vec::new();
+                for (ident, init) in declarators.into_iter() {
+                    let (typ, expr) = match init {
+                        Some(expr) => {
+                            let (t, e) = self.resolve_expression(expr);
+                            (t, Some(e))
+                        },
+                        None => (Type::T(Location::empty()), None),
+                    };
+                    match self.unify_types(type_, typ) {
+                        Ok(_) => {},
+                        Err(_) => {
+                            let message = format!("Expect `{:?}` to be `{:?}`, get `{:?}`.", ident, type_, typ);
+                            self.push_error(&message, location);
+                        },
+                    }
+                    self.symbol_table.insert(ident, type_);
+                    decls.push((ident, expr));
+                }
+                Statement::Def { type_, declarators: decls, location }
+            },
+            Statement::While { condition, body, location } => {
+                let (type_, condition) = self.resolve_expression(condition);
+                match self.unify_types(Type::Int(Location::empty()), type_) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = format!("Expect loop condition to be `Int`, get `{:?}`.", type_);
+                        self.push_error(&message, location);
+                    },
+                }
+                let body = Box::new(self.resolve_statement(*body));
+                Statement::While { condition, body, location }
+            },
+            Statement::Do { condition, body, location } => {
+                let (type_, condition) = self.resolve_expression(condition);
+                match self.unify_types(Type::Int(Location::empty()), type_) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = format!("Expect loop condition to be `Int`, get `{:?}`.", type_);
+                        self.push_error(&message, location);
+                    },
+                }
+                let body = Box::new(self.resolve_statement(*body));
+                Statement::Do { condition, body, location }
+            },
+            Statement::For { initialization, condition, increment, body, location } => {
+                let initialization = match initialization {
+                    Some(expr) => Some(self.resolve_expression(expr).1),
+                    None => None,
+                };
+                let condition = match condition {
+                    Some(expr) => Some(self.resolve_expression(expr).1),
+                    None => None,
+                };
+                let increment = match increment {
+                    Some(expr) => Some(self.resolve_expression(expr).1),
+                    None => None,
+                };
+                let body = Box::new(self.resolve_statement(*body));
+                Statement::For { initialization, condition, increment, body, location }
+            },
+            Statement::If { condition, body, alternative, location } => {
+                let (type_, condition) = self.resolve_expression(condition);
+                match self.unify_types(Type::Int(Location::empty()), type_) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = format!("Expect loop condition to be `Int`, get `{:?}`.", type_);
+                        self.push_error(&message, location);
+                    },
+                }
+                let body = Box::new(self.resolve_statement(*body));
+                let alternative = match alternative {
+                    Some(stmt) => Some(Box::new(self.resolve_statement(*stmt))),
+                    None => None,
+                };
+                Statement::If { condition, body, alternative, location }
+            },
+            Statement::Switch { expression, branches, default, location } => {
+                let (_, expression) = self.resolve_expression(expression);
+                let mut branches_ = Vec::new();
+                for (label, stmts) in branches.into_iter() {
+                    let label_ = self.resolve_expression(label).1;
+                    let mut stmts_ = Vec::new();
+                    for stmt in stmts.into_iter() {
+                        stmts_.push(Box::new(self.resolve_statement(*stmt)));
+                    };
+                    branches_.push((label_, stmts_));
+                }
+                let default = match default {
+                    Some(stmts) => {
+                        let mut stmts_ = Vec::new();
+                        for stmt in stmts.into_iter() {
+                            stmts_.push(Box::new(self.resolve_statement(*stmt)));
+                        }
+                        Some(stmts_)
+                    },
+                    None => None,
+                };
+                Statement::Switch { expression, branches: branches_, default, location }
+            },
         }
     }
 
     fn resolve_expression(&mut self, expr: Expression<'a>) -> (Type, Expression<'a>) {
         match expr {
-            // Expression::Ident { value, location: _ } => self.push_str_space(value),
+            Expression::Ident { value, location } => {
+                match self.symbol_table.get(value) {
+                    Some(type_) => (type_, Expression::Ident { value, location }),
+                    None => {
+                        let message = format!("Undefined ident `{:?}`.", value);
+                        self.push_error(&message, location);
+                        (Type::T(Location::empty()), Expression::Ident { value, location })
+                    },
+                }
+            },
             ex @ Expression::IntConst { .. } => (Type::Int(Location::empty()), ex),
-            // Expression::FloatingConst { value, location: _ } => self.push_str_space(&value.to_string()),
-            // Expression::CharConst { value, location: _ } => self.push_str_space(value),
-            // Expression::StrConst { value, location: _ } => self.push_str_space(value),
-            // Expression::Prefix { operator, expression, location: _ } => {
-            //     self.push_str(operator);
-            //     self.serialize_expression(*expression);
-            // },
-            // Expression::Infix { left, operator, right } => {
-            //     self.serialize_expression(*left);
-            //     self.push_str_space(operator);
-            //     self.serialize_expression(*right);
-            // },
-            // Expression::Suffix { operator, expression } => {
-            //     self.serialize_expression(*expression);
-            //     self.pop_char();
-            //     self.push_str_space(operator);
-            // },
+            ex @ Expression::FloatingConst { .. } => (Type::Float(Location::empty()), ex),
+            ex @ Expression::CharConst { .. } => (Type::Char(Location::empty()), ex),
+            Expression::StrConst { .. } => panic!("Resolver for StrConst is not implemented."),
+            Expression::Prefix { operator, expression, location } => {
+                let (type_, expression) = self.resolve_expression(*expression);
+                match self.unify_types(Type::Double(Location::empty()), type_) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = format!("Expect numbers after `prefix {:?}`, get `{:?}`.", operator, type_);
+                        self.push_error(&message, location);
+                    },
+                }
+                (type_, Expression::Prefix { operator, expression: Box::new(expression), location })
+            },
+            Expression::Infix { left, operator, right } => {
+                let location = left.locate();
+                let (type_l, expr_l) = self.resolve_expression(*left);
+                let (type_r, expr_r) = self.resolve_expression(*right);
+                match self.unify_types(Type::Double(Location::empty()), type_l) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = format!("Expect numbers before `infix {:?}`, get `{:?}`.", operator, type_l);
+                        self.push_error(&message, location);
+                    },
+                }
+                match self.unify_types(Type::Double(Location::empty()), type_r) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = format!("Expect numbers after `infix {:?}`, get `{:?}`.", operator, type_r);
+                        self.push_error(&message, location);
+                    },
+                }
+                (type_r, Expression::Infix { left: Box::new(expr_l), operator, right: Box::new(expr_r) })
+            },
+            Expression::Suffix { operator, expression } => {
+                let location = expression.locate();
+                let (type_, expression) = self.resolve_expression(*expression);
+                match self.unify_types(Type::Double(Location::empty()), type_) {
+                    Ok(_) => {},
+                    Err(_) => {
+                        let message = format!("Expect numbers before `suffix {:?}`, get `{:?}`.", operator, type_);
+                        self.push_error(&message, location);
+                    },
+                }
+                (type_, Expression::Suffix { operator, expression: Box::new(expression) })
+            },
             Expression::Index { .. } => {
                 panic!("Expression::Index not implemented!");
             },
-            // Expression::Call { name, arguments } => {
-            //     self.serialize_expression(*name);
-            //     self.pop_char();
-            //     self.push_str("(");
-            //     if !arguments.is_empty() {
-            //         for arg in arguments.into_iter() {
-            //             self.serialize_expression(*arg);
-            //             self.pop_char();
-            //             self.push_str_space(",");
-            //         }
-            //         self.pop_char();
-            //         self.pop_char();
-            //     }
-            //     self.push_str_space(")");
-            // },
-            _ => panic!("EXPR"),
+            Expression::Call { name, arguments } => {
+                let (name, location) = match *name {
+                    Expression::Ident{ value, location } => (value, location),
+                    _ => panic!("Call only with str const"),
+                };
+                let (return_type, parameters): (Type, Vec<Type>) = match self.symbol_table.functions.get(name) {
+                    None => {
+                        let message = format!("Undefined function `{:?}`.", name);
+                        self.push_error(&message, location);
+                        return (Type::T(Location::empty()), Expression::Call { name: Box::new(Expression::Ident{ value: name, location }), arguments });
+                    },
+                    Some((return_type, parameters)) => {
+                        let mut parameters_ = Vec::new();
+                        for param in parameters.values() {
+                            parameters_.push(*param);
+                        }
+                        (*return_type, parameters_)
+                    },
+                };
+                let mut arguments_ = Vec::new();
+                for (arg, type_param) in arguments.into_iter().zip(parameters.iter()) {
+                    let (type_arg, arg) = self.resolve_expression(*arg);
+                    match self.unify_types(*type_param, type_arg) {
+                        Ok(_) => {},
+                        Err(_) => {
+                            let message = format!("Unmatched arguments in `{:?}`.", name);
+                            self.push_error(&message, location);
+                        },
+                    }
+                    arguments_.push(Box::new(arg));
+                }
+                (return_type, Expression::Call { name: Box::new(Expression::Ident{ value: name, location }), arguments: arguments_ })
+            },
         }
     }
 }

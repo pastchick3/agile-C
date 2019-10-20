@@ -459,15 +459,14 @@ impl<'a> Parser<'a> {
             _ => {
                 loop {
                     match self.tokens.pop() {
-                        Some(Token::Ident { literal, location }) =>  {
+                        Some(Token::Ident { literal, location: _ }) =>  {
                             self.environment.define(literal);
-                            let ident = Expression::Ident { value: literal, location };
                             if let Some(Token::Equal(_)) = self.tokens.last() {
                                 self.tokens.pop();
                                 let value = self.parse_expression(0)?;
-                                declarators.push((ident, Some(value)));
+                                declarators.push((literal, Some(value)));
                             } else {
-                                declarators.push((ident, None));
+                                declarators.push((literal, None));
                             }
                             match self.tokens.pop() {
                                 Some(Token::Comma(_)) => {},
@@ -508,7 +507,7 @@ impl<'a> Parser<'a> {
                             Ok(Statement::Def {
                                 type_: Type::T(Location::empty()),
                                 declarators: vec![(
-                                    Expression::Ident { value, location },
+                                    value,
                                     Some(*right),
                                 )],
                                 location,
@@ -988,20 +987,14 @@ signed f() { return 1;}";
                             type_: Type::Int(Location::new(1, 16)),
                             declarators: vec![
                                 (
-                                    Expression::Ident {
-                                        value: "a",
-                                        location: Location::new(1, 20),
-                                    },
+                                    "a",
                                     Some(Expression::IntConst {
                                         value: 1,
                                         location: Location::new(1, 24),
                                     }),
                                 ),
                                 (
-                                    Expression::Ident {
-                                        value: "b",
-                                        location: Location::new(1, 27),
-                                    },
+                                    "b",
                                     None,
                                 ),
                             ],
@@ -1624,10 +1617,7 @@ signed f() { return 1;}";
                             type_: Type::T(Location::empty()),
                             declarators: vec![
                                 (
-                                    Expression::Ident {
-                                        value: "b",
-                                        location: Location::new(1, 15),
-                                    },
+                                    "b",
                                     Some(
                                         Expression::IntConst {
                                             value: 2,

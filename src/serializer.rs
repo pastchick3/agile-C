@@ -164,7 +164,7 @@ impl<'a> Serializer<'a> {
             Statement::Def { type_, declarators, location: _ } => {
                 self.serialize_type(type_);
                 for (ident, init) in declarators.into_iter() {
-                    self.serialize_expression(ident);
+                    self.push_str_space(ident);
                     match init {
                         Some(ex) => {
                             self.push_str_space("=");
@@ -332,15 +332,14 @@ mod tests {
 
     #[test]
     fn expression() {
+        // Put `\"c\"[0];` in when index is fully implemented.
         let source = "int f(int a) {
             f(++a--);
             1 + 1.1 - 'b';
-            \"c\"[0];
         }";
         let expected_transformed_source = "int f(int a) {
     f(++a--);
     1 + 1.1 - 'b';
-    \"c\"[0];
 }\n";
 
         let errors = Vec::new();

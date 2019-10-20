@@ -297,7 +297,7 @@ pub enum Statement<'a> {
     },
     Def {
         type_: Type,
-        declarators: Vec<(Expression<'a>, Option<Expression<'a>>)>,
+        declarators: Vec<(&'a str, Option<Expression<'a>>)>,
         location: Location,
     },
     While {
