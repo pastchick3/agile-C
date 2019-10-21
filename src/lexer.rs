@@ -1,6 +1,7 @@
-use crate::structure::{Location, Error, Token};
-use Token::*;
 use regex::Regex;
+
+use crate::structure::{Error, Location, Token};
+use Token::*;
 
 pub struct Lexer<'a> {
     lines: Vec<&'a str>,
@@ -22,33 +23,20 @@ impl<'a> Lexer<'a> {
             char_index: 0,
             errors: Some(errors),
             tokens: Some(Vec::new()),
-            raw_num_regex: Regex::new(r"(\d|\.)+").unwrap(),
-            word_regex: Regex::new(r"[[:word:]]+").unwrap(),
+            raw_num_regex: Regex::new(r"\d|\.").unwrap(),
+            word_regex: Regex::new(r"[[:word:]]").unwrap(),
         }
     }
 
-    pub fn run(&mut self) -> (Vec<Token<'a>>, Vec<Error>) {            
+    pub fn run(&mut self) -> (Vec<Token<'a>>, Vec<Error>) {
         loop {
-            // Skip whitespaces.
-            loop {
-                self.skip_whitespaces();
-                if self.get_cur_ch().is_none()
-                        && self.line_index < self.lines.len() - 1 {
-                    self.line_index += 1;
-                    self.char_index = 0;
-                } else {
-                    break;
-                }
-            }
-            // Detect EOF.
-            if self.get_cur_ch().is_none()
-                    && self.line_index == self.lines.len() - 1 {
+            self.skip_whitespaces();
+            if self.get_cur_ch().is_none() {
                 break;
             }
-            // Read one token.
             match self.read_token() {
                 Ok(tk) => self.tokens.as_mut().unwrap().push(tk),
-                Err(_) => {},
+                Err(_) => {}
             }
         }
         (self.tokens.take().unwrap(), self.errors.take().unwrap())
@@ -63,8 +51,8 @@ impl<'a> Lexer<'a> {
                     } else {
                         break;
                     }
-                },
-                None => break
+                }
+                None => break,
             }
         }
     }
@@ -72,7 +60,7 @@ impl<'a> Lexer<'a> {
     fn get_cur_ch(&self) -> Option<&'a str> {
         let line = self.lines[self.line_index];
         if self.char_index < line.len() {
-            Some(&line[self.char_index..self.char_index+1])
+            Some(&line[self.char_index..self.char_index + 1])
         } else {
             None
         }
@@ -84,7 +72,27 @@ impl<'a> Lexer<'a> {
     }
 
     fn forward(&mut self) {
-        self.char_index += 1;
+        let line = self.lines[self.line_index];
+        if self.char_index < line.len() - 1 {
+            self.char_index += 1;
+        } else if self.line_index < self.lines.len() - 1 {
+            self.line_index += 1;
+            self.char_index = 0;
+        } else {
+            self.char_index += 1
+        }
+    }
+
+    fn push_error(&mut self, message: &str) {
+        let location = self.get_location();
+        self.errors.as_mut().unwrap().push(Error::Lexing {
+            message: message.to_string(),
+            location,
+        });
+    }
+
+    fn get_location(&self) -> Location {
+        Location::new(self.line_index + 1, self.start_index + 1)
     }
 
     fn read_token(&mut self) -> Result<Token<'a>, ()> {
@@ -95,141 +103,162 @@ impl<'a> Lexer<'a> {
                 match self.get_cur_ch() {
                     Some("+") => {
                         self.forward();
-                        Ok(self.make_token("BiPlus", "++"))
-                    },
+                        Ok(BiPlus(self.get_location()))
+                    }
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("PlusEq", "+="))
-                    },
-                    _ => Ok(self.make_token("Plus", "+")),
+                        Ok(PlusEq(self.get_location()))
+                    }
+                    _ => Ok(Plus(self.get_location())),
                 }
-            },
+            }
             Some("-") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("-") => {
                         self.forward();
-                        Ok(self.make_token("BiMinus", "--"))
-                    },
+                        Ok(BiMinus(self.get_location()))
+                    }
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("MinusEq", "-="))
-                    },
-                    _ => Ok(self.make_token("Minus", "-")),
+                        Ok(MinusEq(self.get_location()))
+                    }
+                    _ => Ok(Minus(self.get_location())),
                 }
-            },
+            }
             Some("*") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("AsteriskEq", "*="))
-                    },
-                    _ => Ok(self.make_token("Asterisk", "*")),
+                        Ok(AsteriskEq(self.get_location()))
+                    }
+                    _ => Ok(Asterisk(self.get_location())),
                 }
-            },
+            }
             Some("/") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("SlashEq", "/="))
-                    },
-                    _ => Ok(self.make_token("Slash", "/")),
+                        Ok(SlashEq(self.get_location()))
+                    }
+                    _ => Ok(Slash(self.get_location())),
                 }
-            },
+            }
             Some("%") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("PercentEq", "%="))
-                    },
-                    _ => Ok(self.make_token("Percent", "%")),
+                        Ok(PercentEq(self.get_location()))
+                    }
+                    _ => Ok(Percent(self.get_location())),
                 }
-            },
-
+            }
 
             Some("<") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("SmallEq", "<="))
-                    },
-                    _ => Ok(self.make_token("Small", "<")),
+                        Ok(SmallEq(self.get_location()))
+                    }
+                    _ => Ok(Small(self.get_location())),
                 }
-            },
+            }
             Some(">") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("LargeEq", ">="))
-                    },
-                    _ => Ok(self.make_token("Large", ">")),
+                        Ok(LargeEq(self.get_location()))
+                    }
+                    _ => Ok(Large(self.get_location())),
                 }
-            },
+            }
             Some("=") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("EqualTo", "=="))
-                    },
-                    _ => Ok(self.make_token("Equal", "=")),
+                        Ok(EqTo(self.get_location()))
+                    }
+                    _ => Ok(Equal(self.get_location())),
                 }
-            },
+            }
             Some("&") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("&") => {
                         self.forward();
-                        Ok(self.make_token("And", "&&"))
-                    },
-                    _ => Err(self.push_error("Invalid operator `&`.")),
+                        Ok(And(self.get_location()))
+                    }
+                    _ => Err(self.push_error("Invalid token `&`.")),
                 }
-            },
+            }
             Some("|") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("|") => {
                         self.forward();
-                        Ok(self.make_token("Or", "||"))
-                    },
-                    _ => Err(self.push_error("Invalid operator `|`.")),
+                        Ok(Or(self.get_location()))
+                    }
+                    _ => Err(self.push_error("Invalid token `|`.")),
                 }
-            },
+            }
             Some("!") => {
                 self.forward();
                 match self.get_cur_ch() {
                     Some("=") => {
                         self.forward();
-                        Ok(self.make_token("NotEqualTo", "!="))
-                    },
-                    _ => Ok(self.make_token("Not", "!")),
+                        Ok(NotEqTo(self.get_location()))
+                    }
+                    _ => Ok(Not(self.get_location())),
                 }
-            },
+            }
+            Some("(") => {
+                self.forward();
+                Ok(LParen(self.get_location()))
+            }
+            Some(")") => {
+                self.forward();
+                Ok(RParen(self.get_location()))
+            }
+            Some("[") => {
+                self.forward();
+                Ok(LBracket(self.get_location()))
+            }
+            Some("]") => {
+                self.forward();
+                Ok(RBracket(self.get_location()))
+            }
+            Some("{") => {
+                self.forward();
+                Ok(LBrace(self.get_location()))
+            }
+            Some("}") => {
+                self.forward();
+                Ok(RBrace(self.get_location()))
+            }
 
-
-            Some("(") => { self.forward(); Ok(self.make_token("LParen", "(")) },
-            Some(")") => { self.forward(); Ok(self.make_token("RParen", ")")) },
-            Some("[") => { self.forward(); Ok(self.make_token("LBracket", "[")) },
-            Some("]") => { self.forward(); Ok(self.make_token("RBracket", "]")) },
-            Some("{") => { self.forward(); Ok(self.make_token("LBrace", "{")) },
-            Some("}") => { self.forward(); Ok(self.make_token("RBrace", "}")) },
-
-            Some(",") => { self.forward(); Ok(self.make_token("Comma", ",")) },
-            Some(":") => { self.forward(); Ok(self.make_token("Colon", ":")) },
-            Some(";") => { self.forward(); Ok(self.make_token("Semicolon", ";")) },
-
+            Some(",") => {
+                self.forward();
+                Ok(Comma(self.get_location()))
+            }
+            Some(":") => {
+                self.forward();
+                Ok(Colon(self.get_location()))
+            }
+            Some(";") => {
+                self.forward();
+                Ok(Semicolon(self.get_location()))
+            }
             Some(ch) if self.raw_num_regex.is_match(ch) => self.read_num(),
             Some("'") => self.read_char(),
             Some("\"") => self.read_str(),
             Some(ch) if self.word_regex.is_match(ch) => self.read_word(),
-            
-            Some(c) => Err(self.push_error(&format!("Invalid character `{}`.", c))),
-            
+            Some(ch) => Err(self.push_error(&format!("Invalid character `{}`.", ch))),
             None => panic!("Not possible."),
         }
     }
@@ -244,10 +273,14 @@ impl<'a> Lexer<'a> {
         let literal = self.get_slice();
         let literal_vec: Vec<&str> = literal.split(".").collect();
         match literal_vec.len() {
-            1 if literal_vec[0].len() != 0 => Ok(self.make_token("IntConst", literal)),
-            2 if literal_vec[0].len() != 0 && literal_vec[1].len() != 0 => Ok(
-                self.make_token("FloatingConst", literal)
-            ),
+            1 => Ok(IntConst {
+                literal,
+                location: self.get_location(),
+            }),
+            2 if literal_vec[0].len() != 0 && literal_vec[1].len() != 0 => Ok(FloatConst {
+                literal,
+                location: self.get_location(),
+            }),
             _ => Err(self.push_error(&format!("Invalid number literal `{}`.", literal))),
         }
     }
@@ -259,27 +292,29 @@ impl<'a> Lexer<'a> {
                 Some("\\") => {
                     self.forward();
                     match self.get_cur_ch() {
-                        Some("n") | Some("\"") | Some("'") => self.forward(),
-                        _ => {},
+                        Some("n") | Some("'") => self.forward(),
+                        _ => {}
                     }
-                },
+                }
                 Some("'") => {
-                    self.forward(); 
+                    self.forward();
                     break;
-                },
+                }
                 Some(_) => self.forward(),
-                None => return Err(
-                    self.push_error("Encouter EOF while lexing a char literal.")
-                ),
+                None => return Err(self.push_error("Unexpected EOF.")),
             }
         }
         let literal = self.get_slice();
         match literal {
-            ch if ch.len() == 3 && ch.is_ascii() => Ok(self.make_token("CharConst", literal)),
-            "'\\n'" | "'\\\"'" | "'\\''"  => Ok(self.make_token("CharConst", literal)),
-            _ => Err(
-                self.push_error(&format!("Invalid character literal `{}`.", literal))
-            ),
+            ch if ch.len() == 3 && ch.is_ascii() => Ok(CharConst {
+                literal,
+                location: self.get_location(),
+            }),
+            "'\\n'" | "'\\''" => Ok(CharConst {
+                literal,
+                location: self.get_location(),
+            }),
+            _ => Err(self.push_error(&format!("Invalid character literal `{}`.", literal))),
         }
     }
 
@@ -290,22 +325,23 @@ impl<'a> Lexer<'a> {
                 Some("\\") => {
                     self.forward();
                     match self.get_cur_ch() {
-                        Some("n") | Some("\"") | Some("'") => self.forward(),
-                        _ => {},
+                        Some("n") | Some("\"") => self.forward(),
+                        _ => {}
                     }
-                },
+                }
                 Some("\"") => {
-                    self.forward(); 
+                    self.forward();
                     break;
-                },
+                }
                 Some(_) => self.forward(),
-                None => return Err(
-                    self.push_error("Encouter EOF while lexing a str literal.")
-                ),
+                None => return Err(self.push_error("Unexpected EOF.")),
             }
         }
         let literal = self.get_slice();
-        Ok(self.make_token("StrConst", literal))
+        Ok(StrConst {
+            literal,
+            location: self.get_location(),
+        })
     }
 
     fn read_word(&mut self) -> Result<Token<'a>, ()> {
@@ -317,124 +353,44 @@ impl<'a> Lexer<'a> {
         }
         let literal = self.get_slice();
         match literal {
-            "T" => Ok(self.make_token("T", "T")),
-            "void" => Ok(self.make_token("Void", "void")),
-            "char" => Ok(self.make_token("Char", "char")),
-            "short" => Ok(self.make_token("Short", "short")),
-            "int" => Ok(self.make_token("Int", "int")),
-            "long" => Ok(self.make_token("Long", "long")),
-            "float" => Ok(self.make_token("Float", "float")),
-            "double" => Ok(self.make_token("Double", "double")),
-            "signed" => Ok(self.make_token("Signed", "signed")),
-            "unsigned" => Ok(self.make_token("Unsigned", "unsigned")),
+            "T" => Ok(T(self.get_location())),
+            "void" => Ok(Void(self.get_location())),
+            "char" => Ok(Char(self.get_location())),
+            "short" => Ok(Short(self.get_location())),
+            "int" => Ok(Int(self.get_location())),
+            "long" => Ok(Long(self.get_location())),
+            "float" => Ok(Float(self.get_location())),
+            "double" => Ok(Double(self.get_location())),
+            "signed" => Ok(Signed(self.get_location())),
+            "unsigned" => Ok(Unsigned(self.get_location())),
 
-            "switch" => Ok(self.make_token("Switch", "switch")),
-            "case" => Ok(self.make_token("Case", "case")),
-            "default" => Ok(self.make_token("Default", "default")),
-            "if" => Ok(self.make_token("If", "if")),
-            "else" => Ok(self.make_token("Else", "else")),
-            "do" => Ok(self.make_token("Do", "do")),
-            "while" => Ok(self.make_token("While", "while")),
-            "for" => Ok(self.make_token("For", "for")),
-            "continue" => Ok(self.make_token("Continue", "continue")),
-            "break" => Ok(self.make_token("Break", "break")),
-            "return" => Ok(self.make_token("Return", "return")),
+            "switch" => Ok(Switch(self.get_location())),
+            "case" => Ok(Case(self.get_location())),
+            "default" => Ok(Default(self.get_location())),
+            "if" => Ok(If(self.get_location())),
+            "else" => Ok(Else(self.get_location())),
+            "do" => Ok(Do(self.get_location())),
+            "while" => Ok(While(self.get_location())),
+            "for" => Ok(For(self.get_location())),
+            "continue" => Ok(Continue(self.get_location())),
+            "break" => Ok(Break(self.get_location())),
+            "return" => Ok(Return(self.get_location())),
 
-            s => Ok(self.make_token("Ident", s)),
+            _ => Ok(Ident {
+                literal,
+                location: self.get_location(),
+            }),
         }
-    }
-
-    fn push_error(&mut self, message: &str) {
-        self.errors.as_mut().unwrap().push(
-            Error::Lexing {
-                message: message.to_string(),
-                location: Location::new(self.line_index+1, self.start_index+1),
-            }
-        );
-    }
-
-    fn make_token(&self, name: &str, literal: &'a str) -> Token<'a> {
-        let location = Location::new(self.line_index+1, self.start_index+1);
-        let token = match name {
-            "Ident" => Ident { literal, location },
-
-            "IntConst" => IntConst { literal, location },
-            "FloatingConst" => FloatingConst { literal, location },
-            "CharConst" => CharConst { literal, location },
-            "StrConst" => StrConst { literal, location },
-
-            "T" => T(location),
-            "Void" => Void(location),
-            "Char" => Char(location),
-            "Short" => Short(location),
-            "Int" => Int(location),
-            "Long" => Long(location),
-            "Float" => Float(location),
-            "Double" => Double(location),
-            "Signed" => Signed(location),
-            "Unsigned" => Unsigned(location),
-
-            "Plus" => Plus(location),
-            "Minus" => Minus(location),
-            "Asterisk" => Asterisk(location),
-            "Slash" => Slash(location),
-            "Percent" => Percent(location),
-            "BiPlus" => BiPlus(location),
-            "BiMinus" => BiMinus(location),
-            "Equal" => Equal(location),
-
-            "Small" => Small(location),
-            "Large" => Large(location),
-            "SmallEq" => SmallEq(location),
-            "LargeEq" => LargeEq(location),
-            "EqualTo" => EqualTo(location),
-            "NotEqualTo" => NotEqualTo(location),
-            "And" => And(location),
-            "Or" => Or(location),
-            "Not" => Not(location),
-            
-            "PlusEq" => PlusEq(location),
-            "MinusEq" => MinusEq(location),
-            "AsteriskEq" => AsteriskEq(location),
-            "SlashEq" => SlashEq(location),
-            "PercentEq" => PercentEq(location),
-
-            "LParen" => LParen(location),
-            "RParen" => RParen(location),
-            "LBracket" => LBracket(location),
-            "RBracket" => RBracket(location),
-            "LBrace" => LBrace(location),
-            "RBrace" => RBrace(location),
-
-            "Switch" => Switch(location),
-            "Case" => Case(location),
-            "Default" => Default(location),
-            "If" => If(location),
-            "Else" => Else(location),
-            "Do" => Do(location),
-            "While" => While(location),
-            "For" => For(location),
-            "Continue" => Continue(location),
-            "Break" => Break(location),
-            "Return" => Return(location),
-
-            "Comma" => Comma(location),
-            "Colon" => Colon(location),
-            "Semicolon" => Semicolon(location),
-
-            _ => panic!("Not impossible."),
-        };
-        token
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn ident_const() {
-        let source = "a 1 1.1 '\\n' '\\\"' '\\'' 'a' \"\\n\" \"\\\"\" \"\\'\" \"a\"";
+        let source = "a 1 1.1 '\\n' '\\'' 'a' \"\\n\" \"\\\"\" \"a\"";
         let expected_errors = vec![];
         let expected_tokens = vec![
             Ident {
@@ -445,7 +401,7 @@ mod tests {
                 literal: "1",
                 location: Location::new(1, 3),
             },
-            FloatingConst {
+            FloatConst {
                 literal: "1.1",
                 location: Location::new(1, 5),
             },
@@ -454,35 +410,26 @@ mod tests {
                 location: Location::new(1, 9),
             },
             CharConst {
-                literal: "'\\\"'",
+                literal: "'\\''",
                 location: Location::new(1, 14),
             },
             CharConst {
-                literal: "'\\''",
-                location: Location::new(1, 19),
-            },
-            CharConst {
                 literal: "'a'",
-                location: Location::new(1, 24),
+                location: Location::new(1, 19),
             },
             StrConst {
                 literal: "\"\\n\"",
-                location: Location::new(1, 28),
+                location: Location::new(1, 23),
             },
             StrConst {
                 literal: "\"\\\"\"",
-                location: Location::new(1, 33),
-            },
-            StrConst {
-                literal: "\"\\'\"",
-                location: Location::new(1, 38),
+                location: Location::new(1, 28),
             },
             StrConst {
                 literal: "\"a\"",
-                location: Location::new(1, 43),
+                location: Location::new(1, 33),
             },
         ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -490,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn type_specifier() {
+    fn types() {
         let source = "T void char short int long float double signed unsigned";
         let expected_errors = vec![];
         let expected_tokens = vec![
@@ -505,7 +452,6 @@ mod tests {
             Signed(Location::new(1, 41)),
             Unsigned(Location::new(1, 48)),
         ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -526,7 +472,6 @@ mod tests {
             BiMinus(Location::new(1, 14)),
             Equal(Location::new(1, 17)),
         ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -542,13 +487,12 @@ mod tests {
             Large(Location::new(1, 3)),
             SmallEq(Location::new(1, 5)),
             LargeEq(Location::new(1, 8)),
-            EqualTo(Location::new(1, 11)),
-            NotEqualTo(Location::new(1, 14)),
+            EqTo(Location::new(1, 11)),
+            NotEqTo(Location::new(1, 14)),
             And(Location::new(1, 17)),
             Or(Location::new(1, 20)),
             Not(Location::new(1, 23)),
         ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -566,26 +510,6 @@ mod tests {
             SlashEq(Location::new(1, 10)),
             PercentEq(Location::new(1, 13)),
         ];
-
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
-        assert_eq!(errors, expected_errors);
-        assert_eq!(tokens, expected_tokens);
-    }
-
-    #[test]
-    fn parens() {
-        let source = "( ) [ ] { }";
-        let expected_errors = vec![];
-        let expected_tokens = vec![
-            LParen(Location::new(1, 1)),
-            RParen(Location::new(1, 3)),
-            LBracket(Location::new(1, 5)),
-            RBracket(Location::new(1, 7)),
-            LBrace(Location::new(1, 9)),
-            RBrace(Location::new(1, 11)),
-        ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -604,7 +528,6 @@ mod tests {
             LBrace(Location::new(1, 9)),
             RBrace(Location::new(1, 11)),
         ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -628,7 +551,6 @@ mod tests {
             Break(Location::new(1, 51)),
             Return(Location::new(1, 57)),
         ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -644,7 +566,6 @@ mod tests {
             Colon(Location::new(1, 3)),
             Semicolon(Location::new(2, 2)),
         ];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -656,11 +577,11 @@ mod tests {
         let source = "1 & | .1 1. 1.1.1 \'ab\' \'";
         let expected_errors = vec![
             Error::Lexing {
-                message: "Invalid operator `&`.".to_string(),
+                message: "Invalid token `&`.".to_string(),
                 location: Location::new(1, 3),
             },
             Error::Lexing {
-                message: "Invalid operator `|`.".to_string(),
+                message: "Invalid token `|`.".to_string(),
                 location: Location::new(1, 5),
             },
             Error::Lexing {
@@ -680,17 +601,14 @@ mod tests {
                 location: Location::new(1, 19),
             },
             Error::Lexing {
-                message: "Encouter EOF while lexing a char literal.".to_string(),
+                message: "Unexpected EOF.".to_string(),
                 location: Location::new(1, 24),
             },
         ];
-        let expected_tokens = vec![
-            IntConst {
-                literal: "1",
-                location: Location::new(1, 1),
-            },
-        ];
-
+        let expected_tokens = vec![IntConst {
+            literal: "1",
+            location: Location::new(1, 1),
+        }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);
@@ -700,14 +618,11 @@ mod tests {
     #[test]
     fn error_str_eof() {
         let source = "\"";
-        let expected_errors = vec![
-            Error::Lexing {
-                message: "Encouter EOF while lexing a str literal.".to_string(),
-                location: Location::new(1, 1),
-            },
-        ];
+        let expected_errors = vec![Error::Lexing {
+            message: "Unexpected EOF.".to_string(),
+            location: Location::new(1, 1),
+        }];
         let expected_tokens = vec![];
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         assert_eq!(errors, expected_errors);

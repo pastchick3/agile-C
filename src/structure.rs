@@ -1,10 +1,10 @@
+use std::fmt;
+
 use indexmap::IndexMap;
 
-/* * * * * * * * * *
- * Utilities
- * 
- * * * * * * * * * *
- */
+pub trait Locate {
+    fn locate(&self) -> Location;
+}
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Location {
@@ -18,12 +18,17 @@ impl Location {
     }
 
     pub fn empty() -> Location {
-        Location { line_no: 0, char_no: 0 }
+        Location {
+            line_no: 0,
+            char_no: 0,
+        }
     }
 }
 
-pub trait Locate {
-    fn locate(&self) -> Location;
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line_no, self.char_no)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,32 +38,42 @@ pub enum Error {
     Resolving { message: String, location: Location },
 }
 
-/* * * * * * * * * *
- * Lexing
- * 
- * * * * * * * * * *
- */
-
-impl Locate for Error {
-    fn locate(&self) -> Location {
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Error::*;
 
         match self {
-            Lexing { message: _, location } => *location,
-            Parsing { message: _, location } => *location,
-            Resolving { message: _, location } => *location,
+            Lexing { message, location } => write!(f, "({}) Lexing Error: {}", location, message),
+            Parsing { message, location } => write!(f, "({}) Parsing Error: {}", location, message),
+            Resolving { message, location } => {
+                write!(f, "({}) Resolving Error: {}", location, message)
+            }
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
-    Ident { literal: &'a str, location: Location },
-
-    IntConst { literal: &'a str, location: Location },
-    FloatingConst { literal: &'a str, location: Location },
-    CharConst { literal: &'a str, location: Location },
-    StrConst { literal: &'a str, location: Location },
+    Ident {
+        literal: &'a str,
+        location: Location,
+    },
+    IntConst {
+        literal: &'a str,
+        location: Location,
+    },
+    FloatConst {
+        literal: &'a str,
+        location: Location,
+    },
+    CharConst {
+        literal: &'a str,
+        location: Location,
+    },
+    StrConst {
+        literal: &'a str,
+        location: Location,
+    },
 
     T(Location),
     Void(Location),
@@ -84,12 +99,12 @@ pub enum Token<'a> {
     Large(Location),
     SmallEq(Location),
     LargeEq(Location),
-    EqualTo(Location),
-    NotEqualTo(Location),
+    EqTo(Location),
+    NotEqTo(Location),
     And(Location),
     Or(Location),
     Not(Location),
-    
+
     PlusEq(Location),
     MinusEq(Location),
     AsteriskEq(Location),
@@ -125,119 +140,71 @@ impl<'a> Locate for Token<'a> {
         use Token::*;
 
         match self {
-            Ident { literal: _, location }
-            | IntConst { literal: _, location }
-            | FloatingConst { literal: _, location }
-            | CharConst { literal: _, location }
-            | StrConst { literal: _, location } => *location,
-            
-            T(loc)
-            | Void(loc)
-            | Char(loc)
-            | Short(loc)
-            | Int(loc)
-            | Long(loc)
-            | Float(loc)
-            | Double(loc)
-            | Signed(loc)
-            | Unsigned(loc)
+            Ident { location, .. }
+            | IntConst { location, .. }
+            | FloatConst { location, .. }
+            | CharConst { location, .. }
+            | StrConst { location, .. } => *location,
 
-            | Plus(loc)
-            | Minus(loc)
-            | Asterisk(loc)
-            | Slash(loc)
-            | Percent(loc)
-            | BiPlus(loc)
-            | BiMinus(loc)
-            | Equal(loc)
-
-            | Small(loc)
-            | Large(loc)
-            | SmallEq(loc)
-            | LargeEq(loc)
-            | EqualTo(loc)
-            | NotEqualTo(loc)
-            | And(loc)
-            | Or(loc)
-            | Not(loc)
-            
-            | PlusEq(loc)
-            | MinusEq(loc)
-            | AsteriskEq(loc)
-            | SlashEq(loc)
-            | PercentEq(loc)
-
-            | LParen(loc)
-            | RParen(loc)
-            | LBracket(loc)
-            | RBracket(loc)
-            | LBrace(loc)
-            | RBrace(loc)
-
-            | Switch(loc)
-            | Case(loc)
-            | Default(loc)
-            | If(loc)
-            | Else(loc)
-            | Do(loc)
-            | While(loc)
-            | For(loc)
-            | Continue(loc)
-            | Break(loc)
-            | Return(loc)
-
-            | Comma(loc)
-            | Colon(loc)
+            T(loc) | Void(loc) | Char(loc) | Short(loc) | Int(loc) | Long(loc) | Float(loc)
+            | Double(loc) | Signed(loc) | Unsigned(loc) | Plus(loc) | Minus(loc)
+            | Asterisk(loc) | Slash(loc) | Percent(loc) | BiPlus(loc) | BiMinus(loc)
+            | Equal(loc) | Small(loc) | Large(loc) | SmallEq(loc) | LargeEq(loc) | EqTo(loc)
+            | NotEqTo(loc) | And(loc) | Or(loc) | Not(loc) | PlusEq(loc) | MinusEq(loc)
+            | AsteriskEq(loc) | SlashEq(loc) | PercentEq(loc) | LParen(loc) | RParen(loc)
+            | LBracket(loc) | RBracket(loc) | LBrace(loc) | RBrace(loc) | Switch(loc)
+            | Case(loc) | Default(loc) | If(loc) | Else(loc) | Do(loc) | While(loc) | For(loc)
+            | Continue(loc) | Break(loc) | Return(loc) | Comma(loc) | Colon(loc)
             | Semicolon(loc) => *loc,
         }
     }
 }
-
-/* * * * * * * * * *
- * Parsing
- * 
- * * * * * * * * * *
- */
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Type {
     T(Location),
     Void(Location),
     Char(Location),
-    Short(Location),
-    Int(Location),
-    Long(Location),
+    Short { signed: bool, location: Location },
+    Int { signed: bool, location: Location },
+    Long { signed: bool, location: Location },
     Float(Location),
     Double(Location),
-    Signed(Location),
-    Unsigned(Location),
 }
 
 impl Locate for Type {
     fn locate(&self) -> Location {
         use Type::*;
+
         match self {
-            T(loc)
-            | Void(loc)
-            | Char(loc)
-            | Short(loc)
-            | Int(loc)
-            | Long(loc)
-            | Float(loc)
-            | Double(loc)
-            | Signed(loc)
-            | Unsigned(loc) => *loc,
+            Short { location, .. } | Int { location, .. } | Long { location, .. } => *location,
+            T(loc) | Void(loc) | Char(loc) | Float(loc) | Double(loc) => *loc,
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Expression<'a> {
-    Ident { value: &'a str, location: Location },
-    IntConst { value: i128, location: Location },
-    FloatingConst { value: f64, location: Location },
-    CharConst { value: &'a str, location: Location },
-    StrConst { value: &'a str, location: Location },
+    Ident {
+        value: &'a str,
+        location: Location,
+    },
+    IntConst {
+        value: i128,
+        location: Location,
+    },
+    FloatConst {
+        value: f64,
+        location: Location,
+    },
+    CharConst {
+        value: &'a str,
+        location: Location,
+    },
+    StrConst {
+        value: &'a str,
+        location: Location,
+    },
     Prefix {
         operator: &'a str,
         expression: Box<Expression<'a>>,
@@ -253,11 +220,11 @@ pub enum Expression<'a> {
         expression: Box<Expression<'a>>,
     },
     Index {
-        name: Box<Expression<'a>>,
+        expression: Box<Expression<'a>>,
         index: Box<Expression<'a>>,
     },
     Call {
-        name: Box<Expression<'a>>,
+        expression: Box<Expression<'a>>,
         arguments: Vec<Box<Expression<'a>>>,
     },
 }
@@ -267,17 +234,16 @@ impl<'a> Locate for Expression<'a> {
         use Expression::*;
 
         match self {
-            Ident { value: _, location }
-            | IntConst { value: _, location }
-            | FloatingConst { value: _, location }
-            | CharConst { value: _, location }
-            | StrConst { value: _, location }
-            | Prefix { operator: _, expression: _, location } => *location,
-
-            Infix { left, operator: _, right: _ } => left.locate(),
-            Suffix { operator: _, expression } => expression.locate(),
-            Call { name, arguments: _ } => name.locate(),
-            Index { name, index: _ } => name.locate(),
+            Ident { location, .. }
+            | IntConst { location, .. }
+            | FloatConst { location, .. }
+            | CharConst { location, .. }
+            | StrConst { location, .. }
+            | Prefix { location, .. } => *location,
+            Infix { left, .. } => left.locate(),
+            Suffix { expression, .. } => expression.locate(),
+            Index { expression, .. } => expression.locate(),
+            Call { expression, .. } => expression.locate(),
         }
     }
 }
@@ -296,7 +262,7 @@ pub enum Statement<'a> {
         location: Location,
     },
     Def {
-        type_: Type,
+        r#type: Type,
         declarators: Vec<(&'a str, Option<Expression<'a>>)>,
         location: Location,
     },
@@ -336,26 +302,21 @@ impl<'a> Locate for Statement<'a> {
         use Statement::*;
 
         match self {
-            Continue(loc)
-            | Break(loc) => *loc,
-
+            Continue(loc) | Break(loc) => *loc,
             Expr(expr) => expr.locate(),
-
-            Return { expr: _, location }
-            | Block { statements: _, location }
-            | Def { type_: _, declarators: _, location }
-            | While { condition: _, body: _, location }
-            | Do { condition:_, body: _, location }
-            | For { initialization:_, condition: _, increment: _, body: _, location }
-            | If { condition:_, body: _, alternative: _, location }
-            | Switch { expression: _, branches:_, default: _, location } => *location,
+            Return { location, .. } | Block { location, .. } | Def { location, .. } => *location,
+            While { location, .. }
+            | Do { location, .. }
+            | For { location, .. }
+            | If { location, .. }
+            | Switch { location, .. } => *location,
         }
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Function<'a> {
-    pub type_: Type,
+    pub r#type: Type,
     pub name: &'a str,
     pub parameters: IndexMap<&'a str, Type>,
     pub body: Statement<'a>,

@@ -1,4 +1,4 @@
-use crate::structure::{ Type, Expression, Statement, Function };
+use crate::structure::{Expression, Function, Statement, Type};
 
 pub struct Serializer<'a> {
     ast: Vec<Function<'a>>,
@@ -24,7 +24,7 @@ impl<'a> Serializer<'a> {
         }
         self.transformed_source.take().unwrap()
     }
-    
+
     fn push_str(&mut self, s: &str) {
         self.transformed_source.as_mut().unwrap().push_str(s);
     }
@@ -44,7 +44,13 @@ impl<'a> Serializer<'a> {
     }
 
     fn serialize_function(&mut self, func: Function<'a>) {
-        let Function { type_, name, parameters, body, location: _ } = func;
+        let Function {
+            type_,
+            name,
+            parameters,
+            body,
+            location: _,
+        } = func;
         self.serialize_type(type_);
         self.push_str_space(name);
         self.pop_char();
@@ -81,23 +87,36 @@ impl<'a> Serializer<'a> {
         match expr {
             Expression::Ident { value, location: _ } => self.push_str_space(value),
             Expression::IntConst { value, location: _ } => self.push_str_space(&value.to_string()),
-            Expression::FloatingConst { value, location: _ } => self.push_str_space(&value.to_string()),
+            Expression::FloatingConst { value, location: _ } => {
+                self.push_str_space(&value.to_string())
+            }
             Expression::CharConst { value, location: _ } => self.push_str_space(value),
             Expression::StrConst { value, location: _ } => self.push_str_space(value),
-            Expression::Prefix { operator, expression, location: _ } => {
+            Expression::Prefix {
+                operator,
+                expression,
+                location: _,
+            } => {
                 self.push_str(operator);
                 self.serialize_expression(*expression);
-            },
-            Expression::Infix { left, operator, right } => {
+            }
+            Expression::Infix {
+                left,
+                operator,
+                right,
+            } => {
                 self.serialize_expression(*left);
                 self.push_str_space(operator);
                 self.serialize_expression(*right);
-            },
-            Expression::Suffix { operator, expression } => {
+            }
+            Expression::Suffix {
+                operator,
+                expression,
+            } => {
                 self.serialize_expression(*expression);
                 self.pop_char();
                 self.push_str_space(operator);
-            },
+            }
             Expression::Index { name, index } => {
                 self.serialize_expression(*name);
                 self.pop_char();
@@ -105,7 +124,7 @@ impl<'a> Serializer<'a> {
                 self.serialize_expression(*index);
                 self.pop_char();
                 self.push_str_space("]");
-            },
+            }
             Expression::Call { name, arguments } => {
                 self.serialize_expression(*name);
                 self.pop_char();
@@ -120,13 +139,13 @@ impl<'a> Serializer<'a> {
                     self.pop_char();
                 }
                 self.push_str_space(")");
-            },
+            }
         }
     }
 
     fn serialize_statement(&mut self, stmt: Statement<'a>) {
         if self.transformed_source.as_ref().unwrap().ends_with("\n") {
-            self.push_str(&" ".repeat(self.ident_level*4));
+            self.push_str(&" ".repeat(self.ident_level * 4));
         }
         match stmt {
             Statement::Continue(_) => self.push_str_newline("continue;"),
@@ -135,19 +154,20 @@ impl<'a> Serializer<'a> {
                 self.serialize_expression(expr);
                 self.pop_char();
                 self.push_str_newline(";");
-            },
-            Statement::Return { expr, location: _ } => {
-                match expr {
-                    Some(ex) => {
-                        self.push_str_space("return");
-                        self.serialize_expression(ex);
-                        self.pop_char();
-                        self.push_str_newline(";");
-                    },
-                    None => self.push_str_newline("return;"),
+            }
+            Statement::Return { expr, location: _ } => match expr {
+                Some(ex) => {
+                    self.push_str_space("return");
+                    self.serialize_expression(ex);
+                    self.pop_char();
+                    self.push_str_newline(";");
                 }
+                None => self.push_str_newline("return;"),
             },
-            Statement::Block { statements, location: _ } => {
+            Statement::Block {
+                statements,
+                location: _,
+            } => {
                 self.push_str_newline("{");
                 self.ident_level += 1;
                 if statements.is_empty() {
@@ -158,10 +178,14 @@ impl<'a> Serializer<'a> {
                     }
                 }
                 self.ident_level -= 1;
-                self.push_str(&" ".repeat(self.ident_level*4));
+                self.push_str(&" ".repeat(self.ident_level * 4));
                 self.push_str_newline("}");
-            },
-            Statement::Def { type_, declarators, location: _ } => {
+            }
+            Statement::Def {
+                type_,
+                declarators,
+                location: _,
+            } => {
                 self.serialize_type(type_);
                 for (ident, init) in declarators.into_iter() {
                     self.push_str_space(ident);
@@ -169,8 +193,8 @@ impl<'a> Serializer<'a> {
                         Some(ex) => {
                             self.push_str_space("=");
                             self.serialize_expression(ex);
-                        },
-                        None => {},
+                        }
+                        None => {}
                     }
                     self.pop_char();
                     self.push_str_space(",");
@@ -178,16 +202,24 @@ impl<'a> Serializer<'a> {
                 self.pop_char();
                 self.pop_char();
                 self.push_str_newline(";")
-            },
-            Statement::While { condition, body, location: _ } => {
+            }
+            Statement::While {
+                condition,
+                body,
+                location: _,
+            } => {
                 self.push_str_space("while");
                 self.push_str("(");
                 self.serialize_expression(condition);
                 self.pop_char();
                 self.push_str_space(")");
                 self.serialize_statement(*body);
-            },
-            Statement::Do { condition, body, location: _ } => {
+            }
+            Statement::Do {
+                condition,
+                body,
+                location: _,
+            } => {
                 self.push_str_space("do");
                 self.serialize_statement(*body);
                 self.pop_char();
@@ -198,15 +230,21 @@ impl<'a> Serializer<'a> {
                 self.pop_char();
                 self.push_str(")");
                 self.push_str_newline(";");
-            },
-            Statement::For { initialization, condition, increment, body, location: _ } => {
+            }
+            Statement::For {
+                initialization,
+                condition,
+                increment,
+                body,
+                location: _,
+            } => {
                 self.push_str_space("for");
                 self.push_str("(");
                 match initialization {
                     Some(ex) => {
                         self.serialize_expression(ex);
                         self.pop_char();
-                    },
+                    }
                     None => self.push_str_space(""),
                 }
                 self.push_str_space(";");
@@ -214,21 +252,26 @@ impl<'a> Serializer<'a> {
                     Some(ex) => {
                         self.serialize_expression(ex);
                         self.pop_char();
-                    },
-                    None => {},
+                    }
+                    None => {}
                 }
                 self.push_str_space(";");
                 match increment {
                     Some(ex) => {
                         self.serialize_expression(ex);
                         self.pop_char();
-                    },
-                    None => {},
+                    }
+                    None => {}
                 }
                 self.push_str_space(")");
                 self.serialize_statement(*body);
-            },
-            Statement::If { condition, body, alternative, location: _ } => {
+            }
+            Statement::If {
+                condition,
+                body,
+                alternative,
+                location: _,
+            } => {
                 self.push_str_space("if");
                 self.push_str("(");
                 self.serialize_expression(condition);
@@ -240,11 +283,16 @@ impl<'a> Serializer<'a> {
                         self.pop_char();
                         self.push_str_space(" else");
                         self.serialize_statement(*st);
-                    },
-                    None => {},
+                    }
+                    None => {}
                 }
-            },
-            Statement::Switch { expression, branches, default, location: _ } => {
+            }
+            Statement::Switch {
+                expression,
+                branches,
+                default,
+                location: _,
+            } => {
                 self.push_str_space("switch");
                 self.push_str("(");
                 self.serialize_expression(expression);
@@ -253,7 +301,7 @@ impl<'a> Serializer<'a> {
                 self.push_str_newline("{");
                 self.ident_level += 1;
                 for (label, sts) in branches.into_iter() {
-                    self.push_str(&" ".repeat(self.ident_level*4));
+                    self.push_str(&" ".repeat(self.ident_level * 4));
                     self.push_str_space("case");
                     self.serialize_expression(label);
                     self.pop_char();
@@ -266,20 +314,20 @@ impl<'a> Serializer<'a> {
                 }
                 match default {
                     Some(sts) => {
-                        self.push_str(&" ".repeat(self.ident_level*4));
+                        self.push_str(&" ".repeat(self.ident_level * 4));
                         self.push_str_newline("default:");
                         self.ident_level += 1;
                         for st in sts.into_iter() {
                             self.serialize_statement(*st);
                         }
                         self.ident_level -= 1;
-                    },
-                    None => {},
+                    }
+                    None => {}
                 }
                 self.ident_level -= 1;
-                self.push_str(&" ".repeat(self.ident_level*4));
+                self.push_str(&" ".repeat(self.ident_level * 4));
                 self.push_str_newline("}");
-            },
+            }
         }
     }
 }
@@ -290,7 +338,7 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
     use crate::resolver::Resolver;
-    
+
     #[test]
     fn function_empty() {
         let source = "int f() {}";
