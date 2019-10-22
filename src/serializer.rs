@@ -1,4 +1,4 @@
-use crate::structure::{Expression, Function, Statement, Type};
+use crate::structure::{Array, Expression, Function, Statement, Type};
 
 pub struct Serializer<'a> {
     ast: Vec<Function<'a>>,
@@ -45,19 +45,19 @@ impl<'a> Serializer<'a> {
 
     fn serialize_function(&mut self, func: Function<'a>) {
         let Function {
-            type_,
+            r#type,
             name,
             parameters,
             body,
-            location: _,
+            ..
         } = func;
-        self.serialize_type(type_);
+        self.serialize_type(r#type);
         self.push_str_space(name);
         self.pop_char();
         self.push_str("(");
         if !parameters.is_empty() {
-            for (param, type_) in parameters.into_iter() {
-                self.serialize_type(type_);
+            for (param, r#type) in parameters.into_iter() {
+                self.serialize_type(r#type);
                 self.push_str(param);
                 self.push_str_space(",");
             }
@@ -68,34 +68,40 @@ impl<'a> Serializer<'a> {
         self.serialize_statement(body);
     }
 
-    fn serialize_type(&mut self, type_: Type) {
-        match type_ {
-            Type::T(_) => self.push_str_space("T"),
-            Type::Void(_) => self.push_str_space("void"),
-            Type::Char(_) => self.push_str_space("char"),
-            Type::Short(_) => self.push_str_space("short"),
-            Type::Int(_) => self.push_str_space("int"),
-            Type::Long(_) => self.push_str_space("long"),
-            Type::Float(_) => self.push_str_space("float"),
-            Type::Double(_) => self.push_str_space("double"),
-            Type::Signed(_) => self.push_str_space("signed"),
-            Type::Unsigned(_) => self.push_str_space("unsigned"),
+    fn serialize_type(&mut self, r#type: Type) {
+        match r#type {
+            Type::T { .. } => self.push_str_space("T"),
+            Type::Void { .. } => self.push_str_space("void"),
+            Type::Char { .. } => self.push_str_space("char"),
+            Type::Short { signed_flag, .. } => match signed_flag {
+                true => self.push_str_space("short"),
+                false => self.push_str_space("unsigned short"),
+            },
+            Type::Int { signed_flag, .. } => match signed_flag {
+                true => self.push_str_space("int"),
+                false => self.push_str_space("unsigned int"),
+            },
+            Type::Long { signed_flag, .. } => match signed_flag {
+                true => self.push_str_space("long"),
+                false => self.push_str_space("unsigned long"),
+            },
+            Type::Float { .. } => self.push_str_space("float"),
+            Type::Double { .. } => self.push_str_space("double"),
+            _ => panic!("Impossible."),
         }
     }
 
     fn serialize_expression(&mut self, expr: Expression<'a>) {
         match expr {
-            Expression::Ident { value, location: _ } => self.push_str_space(value),
-            Expression::IntConst { value, location: _ } => self.push_str_space(&value.to_string()),
-            Expression::FloatingConst { value, location: _ } => {
-                self.push_str_space(&value.to_string())
-            }
-            Expression::CharConst { value, location: _ } => self.push_str_space(value),
-            Expression::StrConst { value, location: _ } => self.push_str_space(value),
+            Expression::Ident { value, .. } => self.push_str_space(value),
+            Expression::IntConst { value, .. } => self.push_str_space(&value.to_string()),
+            Expression::FloatConst { value, .. } => self.push_str_space(&value.to_string()),
+            Expression::CharConst { value, .. } => self.push_str_space(value),
+            Expression::StrConst { value, .. } => self.push_str_space(value),
             Expression::Prefix {
                 operator,
                 expression,
-                location: _,
+                ..
             } => {
                 self.push_str(operator);
                 self.serialize_expression(*expression);
@@ -117,16 +123,19 @@ impl<'a> Serializer<'a> {
                 self.pop_char();
                 self.push_str_space(operator);
             }
-            Expression::Index { name, index } => {
-                self.serialize_expression(*name);
+            Expression::Index { expression, index } => {
+                self.serialize_expression(*expression);
                 self.pop_char();
                 self.push_str("[");
                 self.serialize_expression(*index);
                 self.pop_char();
                 self.push_str_space("]");
             }
-            Expression::Call { name, arguments } => {
-                self.serialize_expression(*name);
+            Expression::Call {
+                expression,
+                arguments,
+            } => {
+                self.serialize_expression(*expression);
                 self.pop_char();
                 self.push_str("(");
                 if !arguments.is_empty() {
@@ -139,6 +148,20 @@ impl<'a> Serializer<'a> {
                     self.pop_char();
                 }
                 self.push_str_space(")");
+            }
+            Expression::InitList { expressions, .. } => {
+                if expressions.len() == 0 {
+                    return self.push_str_space("{}");
+                }
+                self.push_str_space("{");
+                for expr in expressions {
+                    self.serialize_expression(*expr);
+                    self.pop_char();
+                    self.push_str_space(",");
+                }
+                self.pop_char();
+                self.pop_char();
+                self.push_str_space(" }");
             }
         }
     }
@@ -155,7 +178,7 @@ impl<'a> Serializer<'a> {
                 self.pop_char();
                 self.push_str_newline(";");
             }
-            Statement::Return { expr, location: _ } => match expr {
+            Statement::Return { expr, .. } => match expr {
                 Some(ex) => {
                     self.push_str_space("return");
                     self.serialize_expression(ex);
@@ -164,10 +187,7 @@ impl<'a> Serializer<'a> {
                 }
                 None => self.push_str_newline("return;"),
             },
-            Statement::Block {
-                statements,
-                location: _,
-            } => {
+            Statement::Block { statements, .. } => {
                 self.push_str_newline("{");
                 self.ident_level += 1;
                 if statements.is_empty() {
@@ -181,14 +201,22 @@ impl<'a> Serializer<'a> {
                 self.push_str(&" ".repeat(self.ident_level * 4));
                 self.push_str_newline("}");
             }
-            Statement::Def {
-                type_,
-                declarators,
-                location: _,
-            } => {
-                self.serialize_type(type_);
-                for (ident, init) in declarators.into_iter() {
-                    self.push_str_space(ident);
+            Statement::Def { declarators, .. } => {
+                let r#type = declarators.last().unwrap().0;
+                self.serialize_type(r#type);
+                for (r#type, ident, init) in declarators.into_iter() {
+                    let (array_flag, array_len) = r#type.get_array();
+                    match array_flag {
+                        true => {
+                            self.push_str(ident);
+                            self.push_str("[");
+                            if let Some(len) = array_len {
+                                self.push_str(&len.to_string());
+                            }
+                            self.push_str_space("]");
+                        }
+                        false => self.push_str_space(ident),
+                    }
                     match init {
                         Some(ex) => {
                             self.push_str_space("=");
@@ -204,9 +232,7 @@ impl<'a> Serializer<'a> {
                 self.push_str_newline(";")
             }
             Statement::While {
-                condition,
-                body,
-                location: _,
+                condition, body, ..
             } => {
                 self.push_str_space("while");
                 self.push_str("(");
@@ -216,9 +242,7 @@ impl<'a> Serializer<'a> {
                 self.serialize_statement(*body);
             }
             Statement::Do {
-                condition,
-                body,
-                location: _,
+                condition, body, ..
             } => {
                 self.push_str_space("do");
                 self.serialize_statement(*body);
@@ -236,7 +260,7 @@ impl<'a> Serializer<'a> {
                 condition,
                 increment,
                 body,
-                location: _,
+                ..
             } => {
                 self.push_str_space("for");
                 self.push_str("(");
@@ -270,7 +294,7 @@ impl<'a> Serializer<'a> {
                 condition,
                 body,
                 alternative,
-                location: _,
+                ..
             } => {
                 self.push_str_space("if");
                 self.push_str("(");
@@ -291,7 +315,7 @@ impl<'a> Serializer<'a> {
                 expression,
                 branches,
                 default,
-                location: _,
+                ..
             } => {
                 self.push_str_space("switch");
                 self.push_str("(");
@@ -340,36 +364,27 @@ mod tests {
     use crate::resolver::Resolver;
 
     #[test]
-    fn function_empty() {
-        let source = "int f() {}";
-        let expected_transformed_source = "int f() {}\n";
-
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
-        let (generic_ast, errors) = Parser::new(tokens, errors).run();
-        let (ast, _errors) = Resolver::new(generic_ast, errors).run();
-        let transformed_source = Serializer::new(ast).run();
-        assert_eq!(transformed_source, expected_transformed_source);
-    }
-
-    #[test]
-    fn function_single() {
-        let source = "int f(int a) {}";
-        let expected_transformed_source = "int f(int a) {}\n";
-
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
-        let (generic_ast, errors) = Parser::new(tokens, errors).run();
-        let (ast, _errors) = Resolver::new(generic_ast, errors).run();
-        let transformed_source = Serializer::new(ast).run();
-        assert_eq!(transformed_source, expected_transformed_source);
-    }
-
-    #[test]
-    fn function_multiple() {
-        let source = "int f(int a, float b) {}";
-        let expected_transformed_source = "int f(int a, float b) {}\n";
-
+    fn types() {
+        let source = "void f() {}
+char f(int a) {}
+short f(int a, float b) {}
+int f() {}
+long f() {}
+unsigned short f() {}
+unsigned int f() {}
+unsigned long f() {}
+float f() {}
+double f() {}";
+        let expected_transformed_source = "void f() {}
+char f(int a) {}
+short f(int a, float b) {}
+int f() {}
+long f() {}
+unsigned short f() {}
+unsigned int f() {}
+unsigned long f() {}
+float f() {}
+double f() {}\n";
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         let (generic_ast, errors) = Parser::new(tokens, errors).run();
@@ -380,16 +395,26 @@ mod tests {
 
     #[test]
     fn expression() {
-        // Put `\"c\"[0];` in when index is fully implemented.
         let source = "int f(int a) {
-            f(++a--);
-            1 + 1.1 - 'b';
+            a;
+            1;
+            1.1;
+            '1';
+            \"1\";
+            +1 + a++;
+            \"1\"[0];
+            f(1);
         }";
         let expected_transformed_source = "int f(int a) {
-    f(++a--);
-    1 + 1.1 - 'b';
+    a;
+    1;
+    1.1;
+    '1';
+    \"1\";
+    +1 + a++;
+    \"1\"[0];
+    f(1);
 }\n";
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         let (generic_ast, errors) = Parser::new(tokens, errors).run();
@@ -404,6 +429,7 @@ mod tests {
             int a;
             int b = 1;
             int c, d = 2;
+            int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
 
             while (1) {
                 continue;
@@ -437,6 +463,7 @@ mod tests {
     int a;
     int b = 1;
     int c, d = 2;
+    int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
     while (1) {
         continue;
     }
@@ -459,7 +486,6 @@ mod tests {
     return 0;
     return;
 }\n";
-
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
         let (generic_ast, errors) = Parser::new(tokens, errors).run();

@@ -5,9 +5,11 @@ use Token::*;
 
 pub struct Lexer<'a> {
     lines: Vec<&'a str>,
+    start_line_index: usize,
     line_index: usize,
-    start_index: usize,
+    start_char_index: usize,
     char_index: usize,
+    eof: bool,
     errors: Option<Vec<Error>>,
     tokens: Option<Vec<Token<'a>>>,
     raw_num_regex: Regex,
@@ -18,9 +20,11 @@ impl<'a> Lexer<'a> {
     pub fn new(source: &'a str, errors: Vec<Error>) -> Lexer {
         Lexer {
             lines: source.lines().collect(),
+            start_line_index: 0,
             line_index: 0,
-            start_index: 0,
+            start_char_index: 0,
             char_index: 0,
+            eof: false,
             errors: Some(errors),
             tokens: Some(Vec::new()),
             raw_num_regex: Regex::new(r"\d|\.").unwrap(),
@@ -58,28 +62,37 @@ impl<'a> Lexer<'a> {
     }
 
     fn get_cur_ch(&self) -> Option<&'a str> {
-        let line = self.lines[self.line_index];
-        if self.char_index < line.len() {
-            Some(&line[self.char_index..self.char_index + 1])
-        } else {
+        if self.eof {
             None
+        } else {
+            let line = self.lines[self.line_index];
+            Some(&line[self.char_index..self.char_index + 1])
         }
     }
 
     fn get_slice(&self) -> &'a str {
-        let line = self.lines[self.line_index];
-        &line[self.start_index..self.char_index]
+        let line = self.lines[self.start_line_index];
+        &line[self.start_char_index..self.char_index]
     }
 
     fn forward(&mut self) {
         let line = self.lines[self.line_index];
-        if self.char_index < line.len() - 1 {
+        if self.char_index + 1 < line.len() {
             self.char_index += 1;
-        } else if self.line_index < self.lines.len() - 1 {
+        } else if self.line_index + 1 < self.lines.len() {
             self.line_index += 1;
             self.char_index = 0;
+            while self.lines[self.line_index].len() == 0 {
+                if self.line_index + 1 < self.lines.len() {
+                    self.line_index += 1;
+                } else {
+                    self.eof = true;
+                    break;
+                }
+            }
         } else {
-            self.char_index += 1
+            self.char_index += 1;
+            self.eof = true;
         }
     }
 
@@ -92,11 +105,12 @@ impl<'a> Lexer<'a> {
     }
 
     fn get_location(&self) -> Location {
-        Location::new(self.line_index + 1, self.start_index + 1)
+        Location::new(self.start_line_index + 1, self.start_char_index + 1)
     }
 
     fn read_token(&mut self) -> Result<Token<'a>, ()> {
-        self.start_index = self.char_index;
+        self.start_line_index = self.line_index;
+        self.start_char_index = self.char_index;
         match self.get_cur_ch() {
             Some("+") => {
                 self.forward();
@@ -460,7 +474,7 @@ mod tests {
 
     #[test]
     fn operators() {
-        let source = "+ - * / % ++ -- =";
+        let source = "+ - * / % ++ -- =\n\n";
         let expected_errors = vec![];
         let expected_tokens = vec![
             Plus(Location::new(1, 1)),

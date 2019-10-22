@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
-use crate::structure::{Error, Expression, Function, Locate, Location, Statement, Token, Type};
+use crate::structure::{
+    Array, Error, Expression, Function, Locate, Location, Statement, Token, Type,
+};
 
 struct Environment {
     envs: Vec<HashSet<String>>,
@@ -67,11 +69,11 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn assert_token(&mut self, name: &str) -> Result<(), ()> {
+    fn assert_token(&mut self, name: &str) -> Result<Token, ()> {
         match self.tokens.pop() {
             Some(tk) => {
                 if format!("{:?}", tk).contains(name) {
-                    Ok(())
+                    Ok(tk)
                 } else {
                     self.push_error(&format!("Expect `Token::{}` here.", name), Some(&tk));
                     self.tokens.push(tk);
@@ -187,34 +189,67 @@ impl<'a> Parser<'a> {
 
     fn parse_type(&mut self) -> Result<Type, ()> {
         match self.tokens.pop() {
-            Some(Token::T(loc)) => Ok(Type::T(loc)),
-            Some(Token::Void(loc)) => Ok(Type::Void(loc)),
-            Some(Token::Char(loc)) => Ok(Type::Char(loc)),
+            Some(Token::T(location)) => Ok(Type::T {
+                dummy_flag: false,
+                array_flag: false,
+                array_len: None,
+                location,
+            }),
+            Some(Token::Void(location)) => Ok(Type::Void {
+                array_flag: false,
+                array_len: None,
+                location,
+            }),
+            Some(Token::Char(location)) => Ok(Type::Char {
+                array_flag: false,
+                array_len: None,
+                location,
+            }),
             Some(Token::Short(location)) => Ok(Type::Short {
-                signed: true,
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
                 location,
             }),
             Some(Token::Int(location)) => Ok(Type::Int {
-                signed: true,
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
                 location,
             }),
             Some(Token::Long(location)) => Ok(Type::Long {
-                signed: true,
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
                 location,
             }),
-            Some(Token::Float(loc)) => Ok(Type::Float(loc)),
-            Some(Token::Double(loc)) => Ok(Type::Double(loc)),
+            Some(Token::Float(location)) => Ok(Type::Float {
+                array_flag: false,
+                array_len: None,
+                location,
+            }),
+            Some(Token::Double(location)) => Ok(Type::Double {
+                array_flag: false,
+                array_len: None,
+                location,
+            }),
             Some(Token::Signed(location)) => match self.tokens.pop() {
                 Some(Token::Short(_)) => Ok(Type::Short {
-                    signed: true,
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
                     location,
                 }),
                 Some(Token::Int(_)) => Ok(Type::Int {
-                    signed: true,
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
                     location,
                 }),
                 Some(Token::Long(_)) => Ok(Type::Long {
-                    signed: true,
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
                     location,
                 }),
                 Some(tk) => {
@@ -229,15 +264,21 @@ impl<'a> Parser<'a> {
             },
             Some(Token::Unsigned(location)) => match self.tokens.pop() {
                 Some(Token::Short(_)) => Ok(Type::Short {
-                    signed: false,
+                    signed_flag: false,
+                    array_flag: false,
+                    array_len: None,
                     location,
                 }),
                 Some(Token::Int(_)) => Ok(Type::Int {
-                    signed: false,
+                    signed_flag: false,
+                    array_flag: false,
+                    array_len: None,
                     location,
                 }),
                 Some(Token::Long(_)) => Ok(Type::Long {
-                    signed: false,
+                    signed_flag: false,
+                    array_flag: false,
+                    array_len: None,
                     location,
                 }),
                 Some(tk) => {
@@ -252,7 +293,12 @@ impl<'a> Parser<'a> {
             },
             Some(tk) => {
                 self.tokens.push(tk);
-                Ok(Type::T(Location::empty()))
+                Ok(Type::T {
+                    dummy_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    location: Location::empty(),
+                })
             }
             None => Err(self.push_error("Unexpected EOF.", None)),
         }
@@ -445,7 +491,7 @@ impl<'a> Parser<'a> {
                     branches.push((expr, stmts));
                 }
                 Some(tk @ Token::Default(_)) => {
-                    if default.is_none() {
+                    if !default.is_none() {
                         return Err(self.push_error("Multiple default.", Some(&tk)));
                     }
                     self.assert_token("Colon")?;
@@ -485,12 +531,42 @@ impl<'a> Parser<'a> {
             match self.tokens.pop() {
                 Some(Token::Ident { literal, .. }) => {
                     self.environment.define(literal);
-                    if let Some(Token::Equal(_)) = self.tokens.last() {
-                        self.tokens.pop();
-                        let value = self.parse_expression(0)?;
-                        declarators.push((literal, Some(value)));
-                    } else {
-                        declarators.push((literal, None));
+                    match self.tokens.last() {
+                        Some(Token::Equal(_)) => {
+                            self.tokens.pop();
+                            let value = self.parse_expression(0)?;
+                            declarators.push((r#type, literal, Some(value)));
+                        }
+                        Some(Token::LBracket(_)) => {
+                            let lbracket = self.tokens.pop();
+                            let array_len = match self.tokens.last() {
+                                Some(Token::RBracket(_)) => None,
+                                _ => {
+                                    let expr = self.parse_expression(0)?;
+                                    match expr {
+                                        Expression::IntConst { value, .. } => Some(value as usize),
+                                        _ => {
+                                            self.push_error(
+                                                "Expect a integral literal.",
+                                                lbracket.as_ref(),
+                                            );
+                                            None
+                                        }
+                                    }
+                                }
+                            };
+                            self.assert_token("RBracket")?;
+                            let typ = r#type.set_array(true, array_len);
+                            let init_list = match self.tokens.last() {
+                                Some(Token::Equal(_)) => {
+                                    self.tokens.pop();
+                                    Some(self.parse_expression_init_list()?)
+                                }
+                                _ => None,
+                            };
+                            declarators.push((typ, literal, init_list));
+                        }
+                        _ => declarators.push((r#type, literal, None)),
                     }
                     match self.tokens.pop() {
                         Some(Token::Comma(_)) => {}
@@ -512,7 +588,6 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(Statement::Def {
-            r#type,
             declarators,
             location,
         })
@@ -530,9 +605,14 @@ impl<'a> Parser<'a> {
                 Expression::Ident { value, location } => {
                     if !self.environment.is_defined(value) {
                         self.environment.define(value);
+                        let r#type = Type::T {
+                            dummy_flag: true,
+                            array_flag: false,
+                            array_len: None,
+                            location: Location::empty(),
+                        };
                         Ok(Statement::Def {
-                            r#type: Type::T(Location::empty()),
-                            declarators: vec![(value, Some(*right))],
+                            declarators: vec![(r#type, value, Some(*right))],
                             location,
                         })
                     } else {
@@ -551,6 +631,27 @@ impl<'a> Parser<'a> {
             },
             _ => Ok(Statement::Expr(expr)),
         }
+    }
+
+    fn parse_expression_init_list(&mut self) -> Result<Expression<'a>, ()> {
+        let mut expressions = Vec::new();
+        let lbrace = self.assert_token("LBrace")?;
+        let location = lbrace.locate();
+        loop {
+            match self.tokens.last() {
+                Some(Token::RBrace(_)) => break,
+                Some(Token::Comma(_)) => {
+                    self.tokens.pop();
+                }
+                Some(_) => expressions.push(Box::new(self.parse_expression(0)?)),
+                None => return Err(self.push_error("Unexpected EOF.", None)),
+            }
+        }
+        self.assert_token("RBrace")?;
+        Ok(Expression::InitList {
+            expressions,
+            location,
+        })
     }
 
     fn parse_expression(&mut self, precedence: u8) -> Result<Expression<'a>, ()> {
@@ -772,775 +873,967 @@ impl<'a> Parser<'a> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::lexer::Lexer;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
 
-//     #[test]
-//     fn function_empty() {
-//         let source = "T f() {}";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::T(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![],
-//                 location: Location::new(1, 7),
-//             },
-//             location: Location::new(1, 1),
-//         }];
+    #[test]
+    fn function_empty() {
+        let source = "T f() {}";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::T {
+                dummy_flag: false,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![],
+                location: Location::new(1, 7),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn function_single() {
+        let source = "void f(int a) { continue; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Void {
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: [(
+                "a",
+                Type::Int {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    location: Location::new(1, 8),
+                },
+            )]
+            .iter()
+            .cloned()
+            .collect(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Continue(Location::new(1, 17)))],
+                location: Location::new(1, 15),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn function_single() {
-//         let source = "void f(int a) { continue; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Void(Location::new(1, 1)),
-//             name: "f",
-//             parameters: [("a", Type::Int(Location::new(1, 8)))]
-//                 .iter()
-//                 .cloned()
-//                 .collect(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Continue(Location::new(1, 17)))],
-//                 location: Location::new(1, 15),
-//             },
-//             location: Location::new(1, 1),
-//         }];
+    #[test]
+    fn function_multiple() {
+        let source = "short f() {}
+int f(long a, float b) { continue; break; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![
+            Function {
+                r#type: Type::Short {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    location: Location::new(1, 1),
+                },
+                name: "f",
+                parameters: IndexMap::new(),
+                body: Statement::Block {
+                    statements: vec![],
+                    location: Location::new(1, 11),
+                },
+                location: Location::new(1, 1),
+            },
+            Function {
+                r#type: Type::Int {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    location: Location::new(2, 1),
+                },
+                name: "f",
+                parameters: [
+                    (
+                        "a",
+                        Type::Long {
+                            signed_flag: true,
+                            array_flag: false,
+                            array_len: None,
+                            location: Location::new(2, 7),
+                        },
+                    ),
+                    (
+                        "b",
+                        Type::Float {
+                            array_flag: false,
+                            array_len: None,
+                            location: Location::new(2, 15),
+                        },
+                    ),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
+                body: Statement::Block {
+                    statements: vec![
+                        Box::new(Statement::Continue(Location::new(2, 26))),
+                        Box::new(Statement::Break(Location::new(2, 36))),
+                    ],
+                    location: Location::new(2, 24),
+                },
+                location: Location::new(2, 1),
+            },
+        ];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn statement_return() {
+        let source = "double f() { return;}
+signed short f() { return 1;}";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![
+            Function {
+                r#type: Type::Double {
+                    array_flag: false,
+                    array_len: None,
+                    location: Location::new(1, 1),
+                },
+                name: "f",
+                parameters: IndexMap::new(),
+                body: Statement::Block {
+                    statements: vec![Box::new(Statement::Return {
+                        expr: None,
+                        location: Location::new(1, 14),
+                    })],
+                    location: Location::new(1, 12),
+                },
+                location: Location::new(1, 1),
+            },
+            Function {
+                r#type: Type::Short {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    location: Location::new(2, 1),
+                },
+                name: "f",
+                parameters: IndexMap::new(),
+                body: Statement::Block {
+                    statements: vec![Box::new(Statement::Return {
+                        expr: Some(Expression::IntConst {
+                            value: 1,
+                            location: Location::new(2, 27),
+                        }),
+                        location: Location::new(2, 20),
+                    })],
+                    location: Location::new(2, 18),
+                },
+                location: Location::new(2, 1),
+            },
+        ];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn function_multiple() {
-//         let source = "short f() {}
-// int f(long a, float b) { continue; break; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![
-//             Function {
-//                 r#type: Type::Short(Location::new(1, 1)),
-//                 name: "f",
-//                 parameters: IndexMap::new(),
-//                 body: Statement::Block {
-//                     statements: vec![],
-//                     location: Location::new(1, 11),
-//                 },
-//                 location: Location::new(1, 1),
-//             },
-//             Function {
-//                 r#type: Type::Int(Location::new(2, 1)),
-//                 name: "f",
-//                 parameters: [
-//                     ("a", Type::Long(Location::new(2, 7))),
-//                     ("b", Type::Float(Location::new(2, 15))),
-//                 ]
-//                 .iter()
-//                 .cloned()
-//                 .collect(),
-//                 body: Statement::Block {
-//                     statements: vec![
-//                         Box::new(Statement::Continue(Location::new(2, 26))),
-//                         Box::new(Statement::Break(Location::new(2, 36))),
-//                     ],
-//                     location: Location::new(2, 24),
-//                 },
-//                 location: Location::new(2, 1),
-//             },
-//         ];
+    #[test]
+    fn statement_def() {
+        let source =
+            "signed int f() { int a = 1, b, c[0], d[] = {}, e[1] = { 1 }, f[2] = { 1, 2 }; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Def {
+                    declarators: vec![
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: false,
+                                array_len: None,
+                                location: Location::new(1, 18),
+                            },
+                            "a",
+                            Some(Expression::IntConst {
+                                value: 1,
+                                location: Location::new(1, 26),
+                            }),
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: false,
+                                array_len: None,
+                                location: Location::new(1, 18),
+                            },
+                            "b",
+                            None,
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: true,
+                                array_len: Some(0),
+                                location: Location::new(1, 18),
+                            },
+                            "c",
+                            None,
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: true,
+                                array_len: None,
+                                location: Location::new(1, 18),
+                            },
+                            "d",
+                            Some(Expression::InitList {
+                                expressions: vec![],
+                                location: Location::new(1, 44),
+                            }),
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: true,
+                                array_len: Some(1),
+                                location: Location::new(1, 18),
+                            },
+                            "e",
+                            Some(Expression::InitList {
+                                expressions: vec![Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::new(1, 57),
+                                })],
+                                location: Location::new(1, 55),
+                            }),
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: true,
+                                array_len: Some(2),
+                                location: Location::new(1, 18),
+                            },
+                            "f",
+                            Some(Expression::InitList {
+                                expressions: vec![
+                                    Box::new(Expression::IntConst {
+                                        value: 1,
+                                        location: Location::new(1, 71),
+                                    }),
+                                    Box::new(Expression::IntConst {
+                                        value: 2,
+                                        location: Location::new(1, 74),
+                                    }),
+                                ],
+                                location: Location::new(1, 69),
+                            }),
+                        ),
+                    ],
+                    location: Location::new(1, 18),
+                })],
+                location: Location::new(1, 16),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn statement_while() {
+        let source = "signed long f() { while (1) break; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Long {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::While {
+                    condition: Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 26),
+                    },
+                    body: Box::new(Statement::Break(Location::new(1, 29))),
+                    location: Location::new(1, 19),
+                })],
+                location: Location::new(1, 17),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn statement_return() {
-//         let source = "double f() { return;}
-// signed f() { return 1;}";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![
-//             Function {
-//                 r#type: Type::Double(Location::new(1, 1)),
-//                 name: "f",
-//                 parameters: IndexMap::new(),
-//                 body: Statement::Block {
-//                     statements: vec![Box::new(Statement::Return {
-//                         expr: None,
-//                         location: Location::new(1, 14),
-//                     })],
-//                     location: Location::new(1, 12),
-//                 },
-//                 location: Location::new(1, 1),
-//             },
-//             Function {
-//                 r#type: Type::Signed(Location::new(2, 1)),
-//                 name: "f",
-//                 parameters: IndexMap::new(),
-//                 body: Statement::Block {
-//                     statements: vec![Box::new(Statement::Return {
-//                         expr: Some(Expression::IntConst {
-//                             value: 1,
-//                             location: Location::new(2, 21),
-//                         }),
-//                         location: Location::new(2, 14),
-//                     })],
-//                     location: Location::new(2, 12),
-//                 },
-//                 location: Location::new(2, 1),
-//             },
-//         ];
+    #[test]
+    fn statement_do() {
+        let source = "unsigned short f() { do break; while (1); }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Short {
+                signed_flag: false,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Do {
+                    condition: Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 39),
+                    },
+                    body: Box::new(Statement::Break(Location::new(1, 25))),
+                    location: Location::new(1, 22),
+                })],
+                location: Location::new(1, 20),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn statement_for() {
+        let source = "unsigned int f() { for (; 1; ) break; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: false,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::For {
+                    initialization: None,
+                    condition: Some(Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 27),
+                    }),
+                    increment: None,
+                    body: Box::new(Statement::Break(Location::new(1, 32))),
+                    location: Location::new(1, 20),
+                })],
+                location: Location::new(1, 18),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn statement_def() {
-//         let source = "unsigned f() { int a = 1, b; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Unsigned(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Def {
-//                     r#type: Type::Int(Location::new(1, 16)),
-//                     declarators: vec![
-//                         (
-//                             "a",
-//                             Some(Expression::IntConst {
-//                                 value: 1,
-//                                 location: Location::new(1, 24),
-//                             }),
-//                         ),
-//                         ("b", None),
-//                     ],
-//                     location: Location::new(1, 16),
-//                 })],
-//                 location: Location::new(1, 14),
-//             },
-//             location: Location::new(1, 1),
-//         }];
+    #[test]
+    fn statement_if() {
+        let source = "unsigned long f() { if (1) break; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Long {
+                signed_flag: false,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::If {
+                    condition: Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 25),
+                    },
+                    body: Box::new(Statement::Break(Location::new(1, 28))),
+                    alternative: None,
+                    location: Location::new(1, 21),
+                })],
+                location: Location::new(1, 19),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn statement_if_else() {
+        let source = "int f() { if (1) break; else continue; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::If {
+                    condition: Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 15),
+                    },
+                    body: Box::new(Statement::Break(Location::new(1, 18))),
+                    alternative: Some(Box::new(Statement::Continue(Location::new(1, 30)))),
+                    location: Location::new(1, 11),
+                })],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn statement_while() {
-//         let source = "int f() { while (1) break; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::While {
-//                     condition: Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 18),
-//                     },
-//                     body: Box::new(Statement::Break(Location::new(1, 21))),
-//                     location: Location::new(1, 11),
-//                 })],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
+    #[test]
+    fn statement_switch() {
+        let source = "int f() { switch (1) {case 1: break;} }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Switch {
+                    expression: Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 19),
+                    },
+                    branches: vec![(
+                        Expression::IntConst {
+                            value: 1,
+                            location: Location::new(1, 28),
+                        },
+                        vec![Box::new(Statement::Break(Location::new(1, 31)))],
+                    )],
+                    default: None,
+                    location: Location::new(1, 11),
+                })],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn statement_switch_default() {
+        let source = "int f() { switch (1) {case 1: break; default: continue;} }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Switch {
+                    expression: Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 19),
+                    },
+                    branches: vec![(
+                        Expression::IntConst {
+                            value: 1,
+                            location: Location::new(1, 28),
+                        },
+                        vec![Box::new(Statement::Break(Location::new(1, 31)))],
+                    )],
+                    default: Some(vec![Box::new(Statement::Continue(Location::new(1, 47)))]),
+                    location: Location::new(1, 11),
+                })],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn statement_do() {
-//         let source = "int f() { do break; while (1); }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Do {
-//                     condition: Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 28),
-//                     },
-//                     body: Box::new(Statement::Break(Location::new(1, 14))),
-//                     location: Location::new(1, 11),
-//                 })],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
+    #[test]
+    fn expression_basic() {
+        let source = "int f() { a; 1; 1.0; 'b'; \"c\"; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![
+                    Box::new(Statement::Expr(Expression::Ident {
+                        value: "a",
+                        location: Location::new(1, 11),
+                    })),
+                    Box::new(Statement::Expr(Expression::IntConst {
+                        value: 1,
+                        location: Location::new(1, 14),
+                    })),
+                    Box::new(Statement::Expr(Expression::FloatConst {
+                        value: 1.0,
+                        location: Location::new(1, 17),
+                    })),
+                    Box::new(Statement::Expr(Expression::CharConst {
+                        value: "'b'",
+                        location: Location::new(1, 22),
+                    })),
+                    Box::new(Statement::Expr(Expression::StrConst {
+                        value: "\"c\"",
+                        location: Location::new(1, 27),
+                    })),
+                ],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn expression_arithmetic() {
+        let source = "int f() { 0=++1+--2-3++*4--/(5%6)%7; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                    left: Box::new(Expression::IntConst {
+                        value: 0,
+                        location: Location::new(1, 11),
+                    }),
+                    operator: "=",
+                    right: Box::new(Expression::Infix {
+                        left: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Prefix {
+                                operator: "++",
+                                expression: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::new(1, 15),
+                                }),
+                                location: Location::new(1, 13),
+                            }),
+                            operator: "+",
+                            right: Box::new(Expression::Prefix {
+                                operator: "--",
+                                expression: Box::new(Expression::IntConst {
+                                    value: 2,
+                                    location: Location::new(1, 19),
+                                }),
+                                location: Location::new(1, 17),
+                            }),
+                        }),
+                        operator: "-",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Infix {
+                                left: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::Suffix {
+                                        operator: "++",
+                                        expression: Box::new(Expression::IntConst {
+                                            value: 3,
+                                            location: Location::new(1, 21),
+                                        }),
+                                    }),
+                                    operator: "*",
+                                    right: Box::new(Expression::Suffix {
+                                        operator: "--",
+                                        expression: Box::new(Expression::IntConst {
+                                            value: 4,
+                                            location: Location::new(1, 25),
+                                        }),
+                                    }),
+                                }),
+                                operator: "/",
+                                right: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::IntConst {
+                                        value: 5,
+                                        location: Location::new(1, 30),
+                                    }),
+                                    operator: "%",
+                                    right: Box::new(Expression::IntConst {
+                                        value: 6,
+                                        location: Location::new(1, 32),
+                                    }),
+                                }),
+                            }),
+                            operator: "%",
+                            right: Box::new(Expression::IntConst {
+                                value: 7,
+                                location: Location::new(1, 35),
+                            }),
+                        }),
+                    }),
+                }))],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn statement_for() {
-//         let source = "int f() { for (; 1; ) break; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::For {
-//                     initialization: None,
-//                     condition: Some(Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 18),
-//                     }),
-//                     increment: None,
-//                     body: Box::new(Statement::Break(Location::new(1, 23))),
-//                     location: Location::new(1, 11),
-//                 })],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
+    #[test]
+    fn expression_relationship() {
+        let source = "int f() { 0==1!=2<3>4<=5>=6; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                    left: Box::new(Expression::Infix {
+                        left: Box::new(Expression::IntConst {
+                            value: 0,
+                            location: Location::new(1, 11),
+                        }),
+                        operator: "==",
+                        right: Box::new(Expression::IntConst {
+                            value: 1,
+                            location: Location::new(1, 14),
+                        }),
+                    }),
+                    operator: "!=",
+                    right: Box::new(Expression::Infix {
+                        left: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Infix {
+                                left: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::IntConst {
+                                        value: 2,
+                                        location: Location::new(1, 17),
+                                    }),
+                                    operator: "<",
+                                    right: Box::new(Expression::IntConst {
+                                        value: 3,
+                                        location: Location::new(1, 19),
+                                    }),
+                                }),
+                                operator: ">",
+                                right: Box::new(Expression::IntConst {
+                                    value: 4,
+                                    location: Location::new(1, 21),
+                                }),
+                            }),
+                            operator: "<=",
+                            right: Box::new(Expression::IntConst {
+                                value: 5,
+                                location: Location::new(1, 24),
+                            }),
+                        }),
+                        operator: ">=",
+                        right: Box::new(Expression::IntConst {
+                            value: 6,
+                            location: Location::new(1, 27),
+                        }),
+                    }),
+                }))],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
+    #[test]
+    fn expression_assignment_bool() {
+        let source = "int f() { !0||+1&&-2+=3-=4*=5/=6%=7; }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                    left: Box::new(Expression::Infix {
+                        left: Box::new(Expression::Prefix {
+                            operator: "!",
+                            expression: Box::new(Expression::IntConst {
+                                value: 0,
+                                location: Location::new(1, 12),
+                            }),
+                            location: Location::new(1, 11),
+                        }),
+                        operator: "||",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Prefix {
+                                operator: "+",
+                                expression: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::new(1, 16),
+                                }),
+                                location: Location::new(1, 15),
+                            }),
+                            operator: "&&",
+                            right: Box::new(Expression::Prefix {
+                                operator: "-",
+                                expression: Box::new(Expression::IntConst {
+                                    value: 2,
+                                    location: Location::new(1, 20),
+                                }),
+                                location: Location::new(1, 19),
+                            }),
+                        }),
+                    }),
+                    operator: "+=",
+                    right: Box::new(Expression::Infix {
+                        left: Box::new(Expression::IntConst {
+                            value: 3,
+                            location: Location::new(1, 23),
+                        }),
+                        operator: "-=",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::IntConst {
+                                value: 4,
+                                location: Location::new(1, 26),
+                            }),
+                            operator: "*=",
+                            right: Box::new(Expression::Infix {
+                                left: Box::new(Expression::IntConst {
+                                    value: 5,
+                                    location: Location::new(1, 29),
+                                }),
+                                operator: "/=",
+                                right: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::IntConst {
+                                        value: 6,
+                                        location: Location::new(1, 32),
+                                    }),
+                                    operator: "%=",
+                                    right: Box::new(Expression::IntConst {
+                                        value: 7,
+                                        location: Location::new(1, 35),
+                                    }),
+                                }),
+                            }),
+                        }),
+                    }),
+                }))],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//     #[test]
-//     fn statement_if() {
-//         let source = "int f() { if (1) break; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::If {
-//                     condition: Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 15),
-//                     },
-//                     body: Box::new(Statement::Break(Location::new(1, 18))),
-//                     alternative: None,
-//                     location: Location::new(1, 11),
-//                 })],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
+    #[test]
+    fn dummy_type() {
+        let source = "f(a) { a = 1; b = 2;}";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::T {
+                dummy_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(0, 0),
+            },
+            name: "f",
+            parameters: [(
+                "a",
+                Type::T {
+                    dummy_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    location: Location::new(0, 0),
+                },
+            )]
+            .iter()
+            .cloned()
+            .collect(),
+            body: Statement::Block {
+                statements: vec![
+                    Box::new(Statement::Expr(Expression::Infix {
+                        left: Box::new(Expression::Ident {
+                            value: "a",
+                            location: Location::new(1, 8),
+                        }),
+                        operator: "=",
+                        right: Box::new(Expression::IntConst {
+                            value: 1,
+                            location: Location::new(1, 12),
+                        }),
+                    })),
+                    Box::new(Statement::Def {
+                        declarators: vec![(
+                            Type::T {
+                                dummy_flag: true,
+                                array_flag: false,
+                                array_len: None,
+                                location: Location::new(0, 0),
+                            },
+                            "b",
+                            Some(Expression::IntConst {
+                                value: 2,
+                                location: Location::new(1, 19),
+                            }),
+                        )],
+                        location: Location::new(1, 15),
+                    }),
+                ],
+                location: Location::new(1, 6),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn statement_if_else() {
-//         let source = "int f() { if (1) break; else continue; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::If {
-//                     condition: Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 15),
-//                     },
-//                     body: Box::new(Statement::Break(Location::new(1, 18))),
-//                     alternative: Some(Box::new(Statement::Continue(Location::new(1, 30)))),
-//                     location: Location::new(1, 11),
-//                 })],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn statement_switch() {
-//         let source = "int f() { switch (1) {case 1: break;} }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Switch {
-//                     expression: Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 19),
-//                     },
-//                     branches: vec![(
-//                         Expression::IntConst {
-//                             value: 1,
-//                             location: Location::new(1, 28),
-//                         },
-//                         vec![Box::new(Statement::Break(Location::new(1, 31)))],
-//                     )],
-//                     default: None,
-//                     location: Location::new(1, 11),
-//                 })],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn statement_switch_default() {
-//         let source = "int f() { switch (1) {case 1: break; default: continue;} }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Switch {
-//                     expression: Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 19),
-//                     },
-//                     branches: vec![(
-//                         Expression::IntConst {
-//                             value: 1,
-//                             location: Location::new(1, 28),
-//                         },
-//                         vec![Box::new(Statement::Break(Location::new(1, 31)))],
-//                     )],
-//                     default: Some(vec![Box::new(Statement::Continue(Location::new(1, 47)))]),
-//                     location: Location::new(1, 11),
-//                 })],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn expression_basic() {
-//         let source = "int f() { a; 1; 1.0; 'b'; \"c\"; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![
-//                     Box::new(Statement::Expr(Expression::Ident {
-//                         value: "a",
-//                         location: Location::new(1, 11),
-//                     })),
-//                     Box::new(Statement::Expr(Expression::IntConst {
-//                         value: 1,
-//                         location: Location::new(1, 14),
-//                     })),
-//                     Box::new(Statement::Expr(Expression::FloatingConst {
-//                         value: 1.0,
-//                         location: Location::new(1, 17),
-//                     })),
-//                     Box::new(Statement::Expr(Expression::CharConst {
-//                         value: "'b'",
-//                         location: Location::new(1, 22),
-//                     })),
-//                     Box::new(Statement::Expr(Expression::StrConst {
-//                         value: "\"c\"",
-//                         location: Location::new(1, 27),
-//                     })),
-//                 ],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn expression_arithmetic() {
-//         let source = "int f() { 0=++1+--2-3++*4--/(5%6)%7; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Expr(Expression::Infix {
-//                     left: Box::new(Expression::IntConst {
-//                         value: 0,
-//                         location: Location::new(1, 11),
-//                     }),
-//                     operator: "=",
-//                     right: Box::new(Expression::Infix {
-//                         left: Box::new(Expression::Infix {
-//                             left: Box::new(Expression::Prefix {
-//                                 operator: "++",
-//                                 expression: Box::new(Expression::IntConst {
-//                                     value: 1,
-//                                     location: Location::new(1, 15),
-//                                 }),
-//                                 location: Location::new(1, 13),
-//                             }),
-//                             operator: "+",
-//                             right: Box::new(Expression::Prefix {
-//                                 operator: "--",
-//                                 expression: Box::new(Expression::IntConst {
-//                                     value: 2,
-//                                     location: Location::new(1, 19),
-//                                 }),
-//                                 location: Location::new(1, 17),
-//                             }),
-//                         }),
-//                         operator: "-",
-//                         right: Box::new(Expression::Infix {
-//                             left: Box::new(Expression::Infix {
-//                                 left: Box::new(Expression::Infix {
-//                                     left: Box::new(Expression::Suffix {
-//                                         operator: "++",
-//                                         expression: Box::new(Expression::IntConst {
-//                                             value: 3,
-//                                             location: Location::new(1, 21),
-//                                         }),
-//                                     }),
-//                                     operator: "*",
-//                                     right: Box::new(Expression::Suffix {
-//                                         operator: "--",
-//                                         expression: Box::new(Expression::IntConst {
-//                                             value: 4,
-//                                             location: Location::new(1, 25),
-//                                         }),
-//                                     }),
-//                                 }),
-//                                 operator: "/",
-//                                 right: Box::new(Expression::Infix {
-//                                     left: Box::new(Expression::IntConst {
-//                                         value: 5,
-//                                         location: Location::new(1, 30),
-//                                     }),
-//                                     operator: "%",
-//                                     right: Box::new(Expression::IntConst {
-//                                         value: 6,
-//                                         location: Location::new(1, 32),
-//                                     }),
-//                                 }),
-//                             }),
-//                             operator: "%",
-//                             right: Box::new(Expression::IntConst {
-//                                 value: 7,
-//                                 location: Location::new(1, 35),
-//                             }),
-//                         }),
-//                     }),
-//                 }))],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn expression_relationship() {
-//         let source = "int f() { 0==1!=2<3>4<=5>=6; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Expr(Expression::Infix {
-//                     left: Box::new(Expression::Infix {
-//                         left: Box::new(Expression::IntConst {
-//                             value: 0,
-//                             location: Location::new(1, 11),
-//                         }),
-//                         operator: "==",
-//                         right: Box::new(Expression::IntConst {
-//                             value: 1,
-//                             location: Location::new(1, 14),
-//                         }),
-//                     }),
-//                     operator: "!=",
-//                     right: Box::new(Expression::Infix {
-//                         left: Box::new(Expression::Infix {
-//                             left: Box::new(Expression::Infix {
-//                                 left: Box::new(Expression::Infix {
-//                                     left: Box::new(Expression::IntConst {
-//                                         value: 2,
-//                                         location: Location::new(1, 17),
-//                                     }),
-//                                     operator: "<",
-//                                     right: Box::new(Expression::IntConst {
-//                                         value: 3,
-//                                         location: Location::new(1, 19),
-//                                     }),
-//                                 }),
-//                                 operator: ">",
-//                                 right: Box::new(Expression::IntConst {
-//                                     value: 4,
-//                                     location: Location::new(1, 21),
-//                                 }),
-//                             }),
-//                             operator: "<=",
-//                             right: Box::new(Expression::IntConst {
-//                                 value: 5,
-//                                 location: Location::new(1, 24),
-//                             }),
-//                         }),
-//                         operator: ">=",
-//                         right: Box::new(Expression::IntConst {
-//                             value: 6,
-//                             location: Location::new(1, 27),
-//                         }),
-//                     }),
-//                 }))],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn expression_assignment_bool() {
-//         let source = "int f() { !0||+1&&-2+=3-=4*=5/=6%=7; }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Expr(Expression::Infix {
-//                     left: Box::new(Expression::Infix {
-//                         left: Box::new(Expression::Prefix {
-//                             operator: "!",
-//                             expression: Box::new(Expression::IntConst {
-//                                 value: 0,
-//                                 location: Location::new(1, 12),
-//                             }),
-//                             location: Location::new(1, 11),
-//                         }),
-//                         operator: "||",
-//                         right: Box::new(Expression::Infix {
-//                             left: Box::new(Expression::Prefix {
-//                                 operator: "+",
-//                                 expression: Box::new(Expression::IntConst {
-//                                     value: 1,
-//                                     location: Location::new(1, 16),
-//                                 }),
-//                                 location: Location::new(1, 15),
-//                             }),
-//                             operator: "&&",
-//                             right: Box::new(Expression::Prefix {
-//                                 operator: "-",
-//                                 expression: Box::new(Expression::IntConst {
-//                                     value: 2,
-//                                     location: Location::new(1, 20),
-//                                 }),
-//                                 location: Location::new(1, 19),
-//                             }),
-//                         }),
-//                     }),
-//                     operator: "+=",
-//                     right: Box::new(Expression::Infix {
-//                         left: Box::new(Expression::IntConst {
-//                             value: 3,
-//                             location: Location::new(1, 23),
-//                         }),
-//                         operator: "-=",
-//                         right: Box::new(Expression::Infix {
-//                             left: Box::new(Expression::IntConst {
-//                                 value: 4,
-//                                 location: Location::new(1, 26),
-//                             }),
-//                             operator: "*=",
-//                             right: Box::new(Expression::Infix {
-//                                 left: Box::new(Expression::IntConst {
-//                                     value: 5,
-//                                     location: Location::new(1, 29),
-//                                 }),
-//                                 operator: "/=",
-//                                 right: Box::new(Expression::Infix {
-//                                     left: Box::new(Expression::IntConst {
-//                                         value: 6,
-//                                         location: Location::new(1, 32),
-//                                     }),
-//                                     operator: "%=",
-//                                     right: Box::new(Expression::IntConst {
-//                                         value: 7,
-//                                         location: Location::new(1, 35),
-//                                     }),
-//                                 }),
-//                             }),
-//                         }),
-//                     }),
-//                 }))],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn dummy_type() {
-//         let source = "f(a) { a = 1; b = 2;}";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::T(Location::new(0, 0)),
-//             name: "f",
-//             parameters: [("a", Type::T(Location::empty()))]
-//                 .iter()
-//                 .cloned()
-//                 .collect(),
-//             body: Statement::Block {
-//                 statements: vec![
-//                     Box::new(Statement::Expr(Expression::Infix {
-//                         left: Box::new(Expression::Ident {
-//                             value: "a",
-//                             location: Location::new(1, 8),
-//                         }),
-//                         operator: "=",
-//                         right: Box::new(Expression::IntConst {
-//                             value: 1,
-//                             location: Location::new(1, 12),
-//                         }),
-//                     })),
-//                     Box::new(Statement::Def {
-//                         r#type: Type::T(Location::empty()),
-//                         declarators: vec![(
-//                             "b",
-//                             Some(Expression::IntConst {
-//                                 value: 2,
-//                                 location: Location::new(1, 19),
-//                             }),
-//                         )],
-//                         location: Location::new(1, 15),
-//                     }),
-//                 ],
-//                 location: Location::new(1, 6),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-
-//     #[test]
-//     fn index_call() {
-//         let source = "int f() { a[0]+b(1); }";
-//         let expected_errors = vec![];
-//         let expected_generic_ast = vec![Function {
-//             r#type: Type::Int(Location::new(1, 1)),
-//             name: "f",
-//             parameters: IndexMap::new(),
-//             body: Statement::Block {
-//                 statements: vec![Box::new(Statement::Expr(Expression::Infix {
-//                     left: Box::new(Expression::Index {
-//                         name: Box::new(Expression::Ident {
-//                             value: "a",
-//                             location: Location::new(1, 11),
-//                         }),
-//                         index: Box::new(Expression::IntConst {
-//                             value: 0,
-//                             location: Location::new(1, 13),
-//                         }),
-//                     }),
-//                     operator: "+",
-//                     right: Box::new(Expression::Call {
-//                         name: Box::new(Expression::Ident {
-//                             value: "b",
-//                             location: Location::new(1, 16),
-//                         }),
-//                         arguments: vec![Box::new(Expression::IntConst {
-//                             value: 1,
-//                             location: Location::new(1, 18),
-//                         })],
-//                     }),
-//                 }))],
-//                 location: Location::new(1, 9),
-//             },
-//             location: Location::new(1, 1),
-//         }];
-
-//         let errors = Vec::new();
-//         let (tokens, errors) = Lexer::new(&source, errors).run();
-//         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-//         assert_eq!(errors, expected_errors);
-//         assert_eq!(generic_ast, expected_generic_ast);
-//     }
-// }
+    #[test]
+    fn index_call() {
+        let source = "int f() { a[0]+b(1); }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                location: Location::new(1, 1),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                    left: Box::new(Expression::Index {
+                        expression: Box::new(Expression::Ident {
+                            value: "a",
+                            location: Location::new(1, 11),
+                        }),
+                        index: Box::new(Expression::IntConst {
+                            value: 0,
+                            location: Location::new(1, 13),
+                        }),
+                    }),
+                    operator: "+",
+                    right: Box::new(Expression::Call {
+                        expression: Box::new(Expression::Ident {
+                            value: "b",
+                            location: Location::new(1, 16),
+                        }),
+                        arguments: vec![Box::new(Expression::IntConst {
+                            value: 1,
+                            location: Location::new(1, 18),
+                        })],
+                    }),
+                }))],
+                location: Location::new(1, 9),
+            },
+            location: Location::new(1, 1),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+}

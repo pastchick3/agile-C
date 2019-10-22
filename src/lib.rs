@@ -1,13 +1,13 @@
 mod lexer;
 mod parser;
-// mod resolver;
-// mod serializer;
+mod resolver;
+mod serializer;
 mod structure;
 
 use lexer::Lexer;
 use parser::Parser;
-// use resolver::Resolver;
-// use serializer::Serializer;
+use resolver::Resolver;
+use serializer::Serializer;
 
 pub struct Transpiler {
     source: String,
@@ -28,11 +28,10 @@ impl Transpiler {
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&self.source, errors).run();
         let (generic_ast, errors) = Parser::new(tokens, errors).run();
-        // let (ast, errors) = Resolver::new(generic_ast, errors).run();
-        // let transformed_source = Serializer::new(ast).run();
+        let (ast, errors) = Resolver::new(generic_ast, errors).run();
+        let transformed_source = Serializer::new(ast).run();
         if errors.len() == 0 {
-            // Ok(transformed_source)
-            Ok("1".to_string())
+            Ok(transformed_source)
         } else {
             Err(errors.iter().fold("\n".to_string(), |mut msg, err| {
                 msg.push_str(&format!("    {}\n", err));

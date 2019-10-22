@@ -160,25 +160,188 @@ impl<'a> Locate for Token<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Type {
-    T(Location),
-    Void(Location),
-    Char(Location),
-    Short { signed: bool, location: Location },
-    Int { signed: bool, location: Location },
-    Long { signed: bool, location: Location },
-    Float(Location),
-    Double(Location),
+pub trait Array {
+    fn set_array(&self, array_flag: bool, array_len: Option<usize>) -> Type;
+    fn get_array(&self) -> (bool, Option<usize>);
 }
 
-impl Locate for Type {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Type {
+    T {
+        dummy_flag: bool,
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+    Void {
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+    Char {
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+    Short {
+        signed_flag: bool,
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+    Int {
+        signed_flag: bool,
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+    Long {
+        signed_flag: bool,
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+    Float {
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+    Double {
+        array_flag: bool,
+        array_len: Option<usize>,
+        location: Location,
+    },
+}
+
+impl Array for Type {
+    fn set_array(&self, array_flag: bool, array_len: Option<usize>) -> Type {
+        use Type::*;
+
+        match self {
+            T {
+                dummy_flag,
+                location,
+                ..
+            } => T {
+                dummy_flag: *dummy_flag,
+                array_flag,
+                array_len,
+                location: *location,
+            },
+            Void { location, .. } => Void {
+                array_flag,
+                array_len,
+                location: *location,
+            },
+            Char { location, .. } => Char {
+                array_flag,
+                array_len,
+                location: *location,
+            },
+            Short {
+                signed_flag,
+                location,
+                ..
+            } => Short {
+                signed_flag: *signed_flag,
+                array_flag,
+                array_len,
+                location: *location,
+            },
+            Int {
+                signed_flag,
+                location,
+                ..
+            } => Int {
+                signed_flag: *signed_flag,
+                array_flag,
+                array_len,
+                location: *location,
+            },
+            Long {
+                signed_flag,
+                location,
+                ..
+            } => Long {
+                signed_flag: *signed_flag,
+                array_flag,
+                array_len,
+                location: *location,
+            },
+            Float { location, .. } => Float {
+                array_flag,
+                array_len,
+                location: *location,
+            },
+            Double { location, .. } => Double {
+                array_flag,
+                array_len,
+                location: *location,
+            },
+        }
+    }
+
+    fn get_array(&self) -> (bool, Option<usize>) {
+        use Type::*;
+
+        match self {
+            T {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+            Void {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+            Char {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+            Short {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+            Int {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+            Long {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+            Float {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+            Double {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
+        }
+    }
+}
+
+impl<'a> Locate for Type {
     fn locate(&self) -> Location {
         use Type::*;
 
         match self {
-            Short { location, .. } | Int { location, .. } | Long { location, .. } => *location,
-            T(loc) | Void(loc) | Char(loc) | Float(loc) | Double(loc) => *loc,
+            T { location, .. }
+            | Void { location, .. }
+            | Char { location, .. }
+            | Short { location, .. }
+            | Int { location, .. }
+            | Long { location, .. }
+            | Float { location, .. }
+            | Double { location, .. } => *location,
         }
     }
 }
@@ -227,6 +390,10 @@ pub enum Expression<'a> {
         expression: Box<Expression<'a>>,
         arguments: Vec<Box<Expression<'a>>>,
     },
+    InitList {
+        expressions: Vec<Box<Expression<'a>>>,
+        location: Location,
+    },
 }
 
 impl<'a> Locate for Expression<'a> {
@@ -239,7 +406,8 @@ impl<'a> Locate for Expression<'a> {
             | FloatConst { location, .. }
             | CharConst { location, .. }
             | StrConst { location, .. }
-            | Prefix { location, .. } => *location,
+            | Prefix { location, .. }
+            | InitList { location, .. } => *location,
             Infix { left, .. } => left.locate(),
             Suffix { expression, .. } => expression.locate(),
             Index { expression, .. } => expression.locate(),
@@ -262,8 +430,7 @@ pub enum Statement<'a> {
         location: Location,
     },
     Def {
-        r#type: Type,
-        declarators: Vec<(&'a str, Option<Expression<'a>>)>,
+        declarators: Vec<(Type, &'a str, Option<Expression<'a>>)>,
         location: Location,
     },
     While {
