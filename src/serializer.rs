@@ -16,7 +16,11 @@ impl<'a> Serializer<'a> {
     }
 
     pub fn run(&mut self) -> String {
-        self.ast.take().unwrap().into_iter().for_each(|func| self.serialize_function(func));
+        self.ast
+            .take()
+            .unwrap()
+            .into_iter()
+            .for_each(|func| self.serialize_function(func));
         self.transformed_source.take().unwrap()
     }
 
@@ -172,10 +176,10 @@ impl<'a> Serializer<'a> {
                 self.pop_char();
                 self.push_str_newline(";");
             }
-            Statement::Return { expr, .. } => match expr {
-                Some(ex) => {
+            Statement::Return { expression, .. } => match expression {
+                Some(expr) => {
                     self.push_str_space("return");
-                    self.serialize_expression(ex);
+                    self.serialize_expression(expr);
                     self.pop_char();
                     self.push_str_newline(";");
                 }

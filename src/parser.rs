@@ -75,7 +75,8 @@ impl<'a> Parser<'a> {
                 if format!("{:?}", tk).contains(name) {
                     Ok(tk)
                 } else {
-                    self.push_error(&format!("Expect `Token::{}` here.", name), Some(&tk));
+                    let message = format!("Expect `Token::{}` here.", name);
+                    self.push_error(&message, Some(&tk));
                     self.tokens.push(tk);
                     Err(())
                 }
@@ -353,7 +354,7 @@ impl<'a> Parser<'a> {
         if let Some(Token::Semicolon(_)) = self.tokens.last() {
             self.tokens.pop();
             return Ok(Statement::Return {
-                expr: None,
+                expression: None,
                 location,
             });
         }
@@ -363,7 +364,7 @@ impl<'a> Parser<'a> {
             },
             Ok(expr) => match self.assert_token("Semicolon") {
                 Ok(_) => Ok(Statement::Return {
-                    expr: Some(expr),
+                    expression: Some(expr),
                     location,
                 }),
                 Err(_) => Err(()),
@@ -1024,7 +1025,7 @@ signed short f() { return 1;}";
                 parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![Box::new(Statement::Return {
-                        expr: None,
+                        expression: None,
                         location: Location::new(1, 14),
                     })],
                     location: Location::new(1, 12),
@@ -1042,7 +1043,7 @@ signed short f() { return 1;}";
                 parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![Box::new(Statement::Return {
-                        expr: Some(Expression::IntConst {
+                        expression: Some(Expression::IntConst {
                             value: 1,
                             location: Location::new(2, 27),
                         }),

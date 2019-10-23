@@ -33,11 +33,12 @@ impl Transpiler {
         if errors.len() == 0 {
             Ok(transformed_source)
         } else {
-            Err(errors.iter().fold("\n".to_string(), |mut msg, err| {
+            let mut message = errors.iter().fold("\n".to_string(), |mut msg, err| {
                 msg.push_str(&format!("    {}\n", err));
-                msg.pop();
                 msg
-            }))
+            });
+            message.pop();
+            Err(message)
         }
     }
 }
