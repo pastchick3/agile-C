@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 regex = "1"
 indexmap = "1.2.0"
+colored = "1.8"

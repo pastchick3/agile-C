@@ -1,5 +1,6 @@
 use std::fmt;
 
+use colored::*;
 use indexmap::IndexMap;
 
 pub trait Locate {
@@ -43,10 +44,10 @@ impl fmt::Display for Error {
         use Error::*;
 
         match self {
-            Lexing { message, location } => write!(f, "({}) Lexing Error: {}", location, message),
-            Parsing { message, location } => write!(f, "({}) Parsing Error: {}", location, message),
+            Lexing { message, location } => write!(f, "{} ({}): {}", "Lexing Error".red(), location, message),
+            Parsing { message, location } => write!(f, "{} ({}): {}", "Parsing Error".red(), location, message),
             Resolving { message, location } => {
-                write!(f, "({}) Resolving Error: {}", location, message)
+                write!(f, "{} ({}): {}", "Resolving Error".red(), location, message)
             }
         }
     }
@@ -346,6 +347,23 @@ impl<'a> Locate for Type {
     }
 }
 
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Type::*;
+
+        match self {
+            T { .. } => write!(f, "T"),
+            Void { .. } => write!(f, "void"),
+            Char { .. } => write!(f, "char"),
+            Short { .. } => write!(f, "short"),
+            Int { .. } => write!(f, "int"),
+            Long { .. } => write!(f, "long"),
+            Float { .. } => write!(f, "float"),
+            Double { .. } => write!(f, "double"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Expression<'a> {
     Ident {
@@ -422,7 +440,7 @@ pub enum Statement<'a> {
     Break(Location),
     Expr(Expression<'a>),
     Return {
-        expr: Option<Expression<'a>>,
+        expression: Option<Expression<'a>>,
         location: Location,
     },
     Block {
