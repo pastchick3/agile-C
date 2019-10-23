@@ -1,7 +1,7 @@
 use crate::structure::{Array, Expression, Function, Statement, Type};
 
 pub struct Serializer<'a> {
-    ast: Vec<Function<'a>>,
+    ast: Option<Vec<Function<'a>>>,
     transformed_source: Option<String>,
     ident_level: usize,
 }
@@ -9,19 +9,14 @@ pub struct Serializer<'a> {
 impl<'a> Serializer<'a> {
     pub fn new(ast: Vec<Function<'a>>) -> Serializer {
         Serializer {
-            ast,
+            ast: Some(ast),
             transformed_source: Some(String::new()),
             ident_level: 0,
         }
     }
 
     pub fn run(&mut self) -> String {
-        loop {
-            match self.ast.pop() {
-                Some(func) => self.serialize_function(func),
-                None => break,
-            }
-        }
+        self.ast.take().unwrap().into_iter().for_each(|func| self.serialize_function(func));
         self.transformed_source.take().unwrap()
     }
 
@@ -56,7 +51,7 @@ impl<'a> Serializer<'a> {
         self.pop_char();
         self.push_str("(");
         if !parameters.is_empty() {
-            for (param, r#type) in parameters.into_iter() {
+            for (param, r#type) in parameters {
                 self.serialize_type(r#type);
                 self.push_str(param);
                 self.push_str_space(",");
@@ -87,7 +82,6 @@ impl<'a> Serializer<'a> {
             },
             Type::Float { .. } => self.push_str_space("float"),
             Type::Double { .. } => self.push_str_space("double"),
-            _ => panic!("Impossible."),
         }
     }
 
@@ -139,7 +133,7 @@ impl<'a> Serializer<'a> {
                 self.pop_char();
                 self.push_str("(");
                 if !arguments.is_empty() {
-                    for arg in arguments.into_iter() {
+                    for arg in arguments {
                         self.serialize_expression(*arg);
                         self.pop_char();
                         self.push_str_space(",");
@@ -193,7 +187,7 @@ impl<'a> Serializer<'a> {
                 if statements.is_empty() {
                     self.pop_char();
                 } else {
-                    for st in statements.into_iter() {
+                    for st in statements {
                         self.serialize_statement(*st);
                     }
                 }
@@ -204,7 +198,7 @@ impl<'a> Serializer<'a> {
             Statement::Def { declarators, .. } => {
                 let r#type = declarators.last().unwrap().0;
                 self.serialize_type(r#type);
-                for (r#type, ident, init) in declarators.into_iter() {
+                for (r#type, ident, init) in declarators {
                     let (array_flag, array_len) = r#type.get_array();
                     match array_flag {
                         true => {
@@ -324,14 +318,14 @@ impl<'a> Serializer<'a> {
                 self.push_str_space(")");
                 self.push_str_newline("{");
                 self.ident_level += 1;
-                for (label, sts) in branches.into_iter() {
+                for (label, sts) in branches {
                     self.push_str(&" ".repeat(self.ident_level * 4));
                     self.push_str_space("case");
                     self.serialize_expression(label);
                     self.pop_char();
                     self.push_str_newline(":");
                     self.ident_level += 1;
-                    for st in sts.into_iter() {
+                    for st in sts {
                         self.serialize_statement(*st);
                     }
                     self.ident_level -= 1;
@@ -341,7 +335,7 @@ impl<'a> Serializer<'a> {
                         self.push_str(&" ".repeat(self.ident_level * 4));
                         self.push_str_newline("default:");
                         self.ident_level += 1;
-                        for st in sts.into_iter() {
+                        for st in sts {
                             self.serialize_statement(*st);
                         }
                         self.ident_level -= 1;

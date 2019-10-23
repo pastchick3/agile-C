@@ -2,12 +2,12 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 
-use crate::structure::{Error, Expression, Function, Locate, Location, Statement, Type};
+use crate::structure::{Error, Expression, Location, Locate, Function, Statement, Type};
 
 struct SymbolTable<'a> {
     functions: HashMap<&'a str, (Type, IndexMap<&'a str, Type>)>,
     tables: Vec<HashMap<&'a str, Type>>,
-    current_func: &'a str,
+    current_func: Option<&'a str>,
 }
 
 impl<'a> SymbolTable<'a> {
@@ -15,7 +15,7 @@ impl<'a> SymbolTable<'a> {
         SymbolTable {
             functions: HashMap::new(),
             tables: vec![HashMap::new()],
-            current_func: "global",
+            current_func: None,
         }
     }
 
@@ -32,50 +32,93 @@ impl<'a> SymbolTable<'a> {
     }
 
     fn get(&self, name: &str) -> Option<Type> {
-        for index in (0..self.tables.len()).rev() {
-            match self.tables[index].get(name) {
-                Some(r#type) => return Some(*r#type),
-                None => {}
-            }
-        }
-        None
+        self.tables.iter().rev().find_map(|env| env.get(name)).copied()
     }
 
     fn get_return_type(&self) -> Type {
-        let (return_type, _) = self.functions.get(self.current_func).unwrap();
-        *return_type
+        let name = self.current_func.unwrap();
+        self.functions.get(name).unwrap().0
     }
 
     fn update_return_type(&mut self, return_type: Type) {
-        let (_, parameters) = self.functions.remove(self.current_func).unwrap();
-        self.functions
-            .insert(self.current_func, (return_type, parameters));
+        let name = self.current_func.unwrap();
+        let (_, parameters) = self.functions.remove(name).unwrap();
+        self.functions.insert(name, (return_type, parameters));
+    }
+
+    fn get_parameters(&self) -> IndexMap<&'a str, Type> {
+        let name = self.current_func.unwrap();
+        self.functions.get(name).unwrap().1.clone()
     }
 
     fn update_parameters(&mut self, parameters: IndexMap<&'a str, Type>) {
-        let (return_type, _) = self.functions.remove(self.current_func).unwrap();
-        self.functions
-            .insert(self.current_func, (return_type, parameters));
+        let name = self.current_func.unwrap();
+        let (return_type, _) = self.functions.remove(name).unwrap();
+        self.functions.insert(name, (return_type, parameters));
     }
 }
 
 pub struct Resolver<'a> {
-    generic_ast: Vec<Function<'a>>,
-    inter_ast: Vec<Function<'a>>,
-    symbol_table: SymbolTable<'a>,
+    generic_ast: Option<Vec<Function<'a>>>,
     errors: Option<Vec<Error>>,
-    ast: Option<Vec<Function<'a>>>,
+    symbol_table: SymbolTable<'a>,
 }
 
 impl<'a> Resolver<'a> {
     pub fn new(generic_ast: Vec<Function<'a>>, errors: Vec<Error>) -> Resolver {
         Resolver {
-            generic_ast,
-            inter_ast: Vec::new(),
-            symbol_table: SymbolTable::new(),
+            generic_ast: Some(generic_ast),
             errors: Some(errors),
-            ast: Some(Vec::new()),
+            symbol_table: SymbolTable::new(),
         }
+    }
+
+    pub fn run(&mut self) -> (Vec<Function<'a>>, Vec<Error>) {
+        let mut multi_func_flag = false;
+        let ast: Vec<_> = self.generic_ast.take().unwrap().into_iter().map(|func| {
+            let name = func.name;
+            let return_type = func.r#type;
+            let parameters = func.parameters.clone();
+            if self.symbol_table.functions.contains_key(name) {
+                self.push_error("Multiple function definitions.", func.locate());
+                multi_func_flag = true;
+            } else {
+                self.symbol_table.functions.insert(name, (return_type, parameters));
+            }
+            func
+        }).collect();
+        if multi_func_flag {
+            return (ast, self.errors.take().unwrap());
+        }
+        let ast: Vec<_> = ast.into_iter().map(|func| self.resolve_function(func)).collect();
+        let ast: Vec<_> = ast.into_iter().map(|mut func| {
+            let name = func.name;
+            let location = func.locate();
+            let (return_type, parameters) = self.symbol_table.functions.remove(name).unwrap();
+            match return_type {
+                Type::T { .. } => {
+                    let message =
+                        format!("Unresolved return type of function `{}`.", name);
+                    self.push_error(&message, location);
+                }
+                _ => func.r#type = return_type,
+            }
+            for (param, r#type) in &parameters {
+                match r#type {
+                    Type::T { .. } => {
+                        let message = format!(
+                            "Unresolved parameter `{}` in function `{}`.",
+                            param, name
+                        );
+                        self.push_error(&message, location);
+                    }
+                    _ => {}
+                }
+            }
+            func.parameters = parameters;
+            func
+        }).collect();
+        (ast, self.errors.take().unwrap())
     }
 
     fn push_error(&mut self, message: &str, location: Location) {
@@ -137,95 +180,36 @@ impl<'a> Resolver<'a> {
     //     }
     // }
 
-    pub fn run(&mut self) -> (Vec<Function<'a>>, Vec<Error>) {
-        // for func in self.generic_ast.iter() {
-        //     let name = func.name;
-        //     let return_type = func.r#type;
-        //     let parameters = func.parameters.clone();
-        //     self.symbol_table
-        //         .functions
-        //         .insert(name, (return_type, parameters));
+    fn resolve_function(&mut self, function: Function<'a>) -> Function<'a> {
+        function
+        // let Function {
+        //     r#type,
+        //     name,
+        //     parameters,
+        //     body,
+        //     location,
+        // } = func;
+        // self.symbol_table.current_func = name;
+        // self.symbol_table.enter();
+        // for (param, r#type) in parameters.iter() {
+        //     self.symbol_table.insert(param, *r#type);
         // }
-        // loop {
-        //     match self.generic_ast.pop() {
-        //         Some(func) => {
-        //             let func = self.resolve_function(func);
-        //             self.inter_ast.push(func);
-        //         }
-        //         None => break,
-        //     }
+        // let body = self.resolve_statement(body);
+        // let mut new_parameters = IndexMap::new();
+        // for param in parameters.keys() {
+        //     let r#type = self.symbol_table.get(param).unwrap();
+        //     new_parameters.insert(*param, r#type);
         // }
-        // loop {
-        //     match self.inter_ast.pop() {
-        //         Some(mut func) => {
-        //             let name = func.name;
-        //             let (return_type, parameters) =
-        //                 self.symbol_table.functions.remove(name).unwrap();
-        //             match return_type {
-        //                 Type::T { .. } => {
-        //                     let message =
-        //                         format!("Unresolved return type of function `{:?}`.", name);
-        //                     self.push_error(&message, func.location);
-        //                 }
-        //                 _ => func.r#type = return_type,
-        //             }
-        //             for (param, r#type) in parameters.iter() {
-        //                 match r#type {
-        //                     Type::T { .. } => {
-        //                         let message = format!(
-        //                             "Unresolved parameter `{:?}` in function `{:?}`.",
-        //                             param, name
-        //                         );
-        //                         self.push_error(&message, func.location);
-        //                     }
-        //                     _ => {}
-        //                 }
-        //             }
-        //             func.parameters = parameters.clone();
-        //             self.ast.as_mut().unwrap().push(func);
-        //         }
-        //         None => break,
-        //     }
+        // self.symbol_table.update_parameters(new_parameters);
+        // self.symbol_table.leave();
+        // Function {
+        //     r#type,
+        //     name,
+        //     parameters,
+        //     body,
+        //     location,
         // }
-        let mut v = Vec::new();
-        loop {
-            match self.generic_ast.pop() {
-                Some(f) => v.push(f),
-                _ => break,
-            }
-        }
-        (v, self.errors.take().unwrap())
     }
-
-    //     fn resolve_function(&mut self, func: Function<'a>) -> Function<'a> {
-    //         let Function {
-    //             r#type,
-    //             name,
-    //             parameters,
-    //             body,
-    //             location,
-    //         } = func;
-    //         self.symbol_table.current_func = name;
-    //         self.symbol_table.enter();
-    //         for (param, r#type) in parameters.iter() {
-    //             self.symbol_table.insert(param, *r#type);
-    //         }
-    //         let body = self.resolve_statement(body);
-    //         let mut new_parameters = IndexMap::new();
-    //         for param in parameters.keys() {
-    //             let r#type = self.symbol_table.get(param).unwrap();
-    //             new_parameters.insert(*param, r#type);
-    //         }
-    //         self.symbol_table.update_parameters(new_parameters);
-    //         self.symbol_table.leave();
-    //         Function {
-    //             r#type,
-    //             name,
-    //             parameters,
-    //             body,
-    //             location,
-    //         }
-    //     }
 
     //     fn resolve_statement(&mut self, stmt: Statement<'a>) -> Statement<'a> {
     //         match stmt {
