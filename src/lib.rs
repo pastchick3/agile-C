@@ -30,7 +30,7 @@ impl Transpiler {
         let (generic_ast, errors) = Parser::new(tokens, errors).run();
         let (ast, errors) = Resolver::new(generic_ast, errors).run();
         let transformed_source = Serializer::new(ast).run();
-        if errors.len() == 0 {
+        if errors.is_empty() {
             Ok(transformed_source)
         } else {
             let mut message = errors.iter().fold("\n".to_string(), |mut msg, err| {

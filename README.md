@@ -92,7 +92,8 @@ For variable definitions, the parser will maintain a environment object for each
 - Document v2.0.
 - Fine-grained inference for integers and floting-point numbers.
 - Parsing of full variable initialization syntax (mainly for arrays).
-- Parsing and type inference for the pointer type.
+- Parsing and type inference for the pointer type (including str/char *).
+- Type inference between function arguments and parameters.
 - Parsing and type inference for the structure type.
 - Cross-file parsing and type inference (`#include` directive).
 

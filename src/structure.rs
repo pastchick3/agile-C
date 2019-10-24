@@ -410,10 +410,10 @@ pub enum Expression<'a> {
     },
     Call {
         expression: Box<Expression<'a>>,
-        arguments: Vec<Box<Expression<'a>>>,
+        arguments: Vec<Expression<'a>>,
     },
     InitList {
-        expressions: Vec<Box<Expression<'a>>>,
+        expressions: Vec<Expression<'a>>,
         location: Location,
     },
 }
@@ -448,7 +448,7 @@ pub enum Statement<'a> {
         location: Location,
     },
     Block {
-        statements: Vec<Box<Statement<'a>>>,
+        statements: Vec<Statement<'a>>,
         location: Location,
     },
     Def {
@@ -480,8 +480,8 @@ pub enum Statement<'a> {
     },
     Switch {
         expression: Expression<'a>,
-        branches: Vec<(Expression<'a>, Vec<Box<Statement<'a>>>)>,
-        default: Option<Vec<Box<Statement<'a>>>>,
+        branches: Vec<(Expression<'a>, Vec<Statement<'a>>)>,
+        default: Option<Vec<Statement<'a>>>,
         location: Location,
     },
 }

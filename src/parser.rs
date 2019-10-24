@@ -31,7 +31,7 @@ impl Environment {
 
     fn is_defined(&self, name: &str) -> bool {
         let defined: Vec<_> = self.envs.iter().filter(|e| e.contains(name)).collect();
-        defined.len() != 0
+        !defined.is_empty()
     }
 }
 
@@ -54,13 +54,10 @@ impl<'a> Parser<'a> {
     }
 
     pub fn run(&mut self) -> (Vec<Function<'a>>, Vec<Error>) {
-        loop {
-            match self.tokens.last() {
-                Some(_) => match self.parse_function() {
-                    Ok(func) => self.generic_ast.as_mut().unwrap().push(func),
-                    Err(_) => self.tokens.clear(),
-                },
-                None => break,
+        while let Some(_) = self.tokens.last() {
+            match self.parse_function() {
+                Ok(func) => self.generic_ast.as_mut().unwrap().push(func),
+                Err(_) => self.tokens.clear(),
             }
         }
         (
@@ -81,7 +78,10 @@ impl<'a> Parser<'a> {
                     Err(())
                 }
             }
-            None => Err(self.push_error("Unexpected EOF.", None)),
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                Err(())
+            }
         }
     }
 
@@ -140,18 +140,33 @@ impl<'a> Parser<'a> {
         self.environment.enter();
         let location = match self.tokens.last() {
             Some(tk) => tk.locate(),
-            None => return Err(self.push_error("Unexpected EOF.", None)),
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                return Err(());
+            }
         };
         let r#type = self.parse_type()?;
         let name = match self.tokens.pop() {
             Some(Token::Ident { literal, .. }) => literal,
-            Some(tk) => return Err(self.push_error("Expect a function name.", Some(&tk))),
-            None => return Err(self.push_error("Unexpected EOF.", None)),
+            Some(tk) => {
+                self.push_error("Expect a function name.", Some(&tk));
+                return Err(());
+            }
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                return Err(());
+            }
         };
         match self.tokens.pop() {
             Some(Token::LParen(_)) => {}
-            Some(tk) => return Err(self.push_error("Expect `(`.", Some(&tk))),
-            None => return Err(self.push_error("Unexpected EOF.", None)),
+            Some(tk) => {
+                self.push_error("Expect `(`.", Some(&tk));
+                return Err(());
+            }
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                return Err(());
+            }
         }
         let mut parameters = IndexMap::new();
         match self.tokens.last() {
@@ -165,15 +180,27 @@ impl<'a> Parser<'a> {
                         self.environment.define(literal);
                         literal
                     }
-                    Some(tk) => return Err(self.push_error("Expect a parameter name.", Some(&tk))),
-                    None => return Err(self.push_error("Unexpected EOF.", None)),
+                    Some(tk) => {
+                        self.push_error("Expect a parameter name.", Some(&tk));
+                        return Err(());
+                    }
+                    None => {
+                        self.push_error("Unexpected EOF.", None);
+                        return Err(());
+                    }
                 };
                 parameters.insert(name, r#type);
                 match self.tokens.pop() {
                     Some(Token::Comma(_)) => {}
                     Some(Token::RParen(_)) => break,
-                    Some(tk) => return Err(self.push_error("Expect `,` or `)`.", Some(&tk))),
-                    None => return Err(self.push_error("Unexpected EOF.", None)),
+                    Some(tk) => {
+                        self.push_error("Expect `,` or `)`.", Some(&tk));
+                        return Err(());
+                    }
+                    None => {
+                        self.push_error("Unexpected EOF.", None);
+                        return Err(());
+                    }
                 }
             },
         }
@@ -261,7 +288,10 @@ impl<'a> Parser<'a> {
                     self.tokens.push(tk);
                     Err(())
                 }
-                None => Err(self.push_error("Unexpected EOF.", None)),
+                None => {
+                    self.push_error("Unexpected EOF.", None);
+                    Err(())
+                }
             },
             Some(Token::Unsigned(location)) => match self.tokens.pop() {
                 Some(Token::Short(_)) => Ok(Type::Short {
@@ -290,7 +320,10 @@ impl<'a> Parser<'a> {
                     self.tokens.push(tk);
                     Err(())
                 }
-                None => Err(self.push_error("Unexpected EOF.", None)),
+                None => {
+                    self.push_error("Unexpected EOF.", None);
+                    Err(())
+                }
             },
             Some(tk) => {
                 self.tokens.push(tk);
@@ -301,7 +334,10 @@ impl<'a> Parser<'a> {
                     location: Location::empty(),
                 })
             }
-            None => Err(self.push_error("Unexpected EOF.", None)),
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                Err(())
+            }
         }
     }
 
@@ -336,7 +372,10 @@ impl<'a> Parser<'a> {
                 self.parse_statement_expr()
             }
 
-            None => Err(self.push_error("Unexpected EOF.", None)),
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                Err(())
+            }
         }
     }
 
@@ -381,11 +420,15 @@ impl<'a> Parser<'a> {
                     self.tokens.pop();
                     break;
                 }
-                Some(_) => match self.parse_statement() {
-                    Ok(stmt) => statements.push(Box::new(stmt)),
-                    Err(_) => {}
-                },
-                None => return Err(self.push_error("Unexpected EOF.", None)),
+                Some(_) => {
+                    if let Ok(stmt) = self.parse_statement() {
+                        statements.push(stmt);
+                    }
+                }
+                None => {
+                    self.push_error("Unexpected EOF.", None);
+                    return Err(());
+                }
             }
         }
         self.environment.leave();
@@ -486,14 +529,15 @@ impl<'a> Parser<'a> {
                             Some(Token::Case(_))
                             | Some(Token::Default(_))
                             | Some(Token::RBrace(_)) => break,
-                            _ => stmts.push(Box::new(self.parse_statement()?)),
+                            _ => stmts.push(self.parse_statement()?),
                         }
                     }
                     branches.push((expr, stmts));
                 }
                 Some(tk @ Token::Default(_)) => {
-                    if !default.is_none() {
-                        return Err(self.push_error("Multiple default.", Some(&tk)));
+                    if default.is_some() {
+                        self.push_error("Multiple default.", Some(&tk));
+                        return Err(());
                     }
                     self.assert_token("Colon")?;
                     let mut stmts = Vec::new();
@@ -502,7 +546,7 @@ impl<'a> Parser<'a> {
                             Some(Token::Case(_))
                             | Some(Token::Default(_))
                             | Some(Token::RBrace(_)) => break,
-                            _ => stmts.push(Box::new(self.parse_statement()?)),
+                            _ => stmts.push(self.parse_statement()?),
                         }
                     }
                     default = Some(stmts);
@@ -513,7 +557,10 @@ impl<'a> Parser<'a> {
                     self.tokens.push(tk);
                     return Err(());
                 }
-                None => return Err(self.push_error("Unexpected EOF.", None)),
+                None => {
+                    self.push_error("Unexpected EOF.", None);
+                    return Err(());
+                }
             }
         }
         Ok(Statement::Switch {
@@ -577,7 +624,10 @@ impl<'a> Parser<'a> {
                             self.tokens.push(tk);
                             return Err(());
                         }
-                        None => return Err(self.push_error("Unexpected EOF.", None)),
+                        None => {
+                            self.push_error("Unexpected EOF.", None);
+                            return Err(());
+                        }
                     }
                 }
                 Some(tk) => {
@@ -585,7 +635,10 @@ impl<'a> Parser<'a> {
                     self.tokens.push(tk);
                     return Err(());
                 }
-                None => return Err(self.push_error("Unexpected EOF.", None)),
+                None => {
+                    self.push_error("Unexpected EOF.", None);
+                    return Err(());
+                }
             }
         }
         Ok(Statement::Def {
@@ -644,8 +697,11 @@ impl<'a> Parser<'a> {
                 Some(Token::Comma(_)) => {
                     self.tokens.pop();
                 }
-                Some(_) => expressions.push(Box::new(self.parse_expression(0)?)),
-                None => return Err(self.push_error("Unexpected EOF.", None)),
+                Some(_) => expressions.push(self.parse_expression(0)?),
+                None => {
+                    self.push_error("Unexpected EOF.", None);
+                    return Err(());
+                }
             }
         }
         self.assert_token("RBrace")?;
@@ -660,7 +716,7 @@ impl<'a> Parser<'a> {
         while self.get_infix_precedence() != 0 && precedence < self.get_infix_precedence() {
             left = self.parse_infix(self.get_infix_precedence(), left)?;
         }
-        return Ok(left);
+        Ok(left)
     }
 
     fn parse_prefix(&mut self) -> Result<Expression<'a>, ()> {
@@ -719,9 +775,12 @@ impl<'a> Parser<'a> {
             Some(tk) => {
                 self.push_error("Expect a prefix operator.", Some(&tk));
                 self.tokens.push(tk);
-                return Err(());
+                Err(())
             }
-            None => return Err(self.push_error("Unexpected EOF.", None)),
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                Err(())
+            }
         }
     }
 
@@ -846,7 +905,7 @@ impl<'a> Parser<'a> {
                     }
                     _ => loop {
                         let arg = self.parse_expression(0)?;
-                        arguments.push(Box::new(arg));
+                        arguments.push(arg);
                         match self.tokens.pop() {
                             Some(Token::Comma(_)) => {}
                             Some(Token::RParen(_)) => break,
@@ -855,7 +914,10 @@ impl<'a> Parser<'a> {
                                 self.tokens.push(tk);
                                 return Err(());
                             }
-                            None => return Err(self.push_error("Unexpected EOF.", None)),
+                            None => {
+                                self.push_error("Unexpected EOF.", None);
+                                return Err(());
+                            }
                         }
                     },
                 }
@@ -867,9 +929,12 @@ impl<'a> Parser<'a> {
             Some(tk) => {
                 self.push_error("Expect an infix operator.", Some(&tk));
                 self.tokens.push(tk);
-                return Err(());
+                Err(())
             }
-            None => return Err(self.push_error("Unexpected EOF.", None)),
+            None => {
+                self.push_error("Unexpected EOF.", None);
+                Err(())
+            }
         }
     }
 }
@@ -929,7 +994,7 @@ mod tests {
             .cloned()
             .collect(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Continue(Location::new(1, 17)))],
+                statements: vec![Statement::Continue(Location::new(1, 17))],
                 location: Location::new(1, 15),
             },
             location: Location::new(1, 1),
@@ -994,8 +1059,8 @@ int f(long a, float b) { continue; break; }";
                 .collect(),
                 body: Statement::Block {
                     statements: vec![
-                        Box::new(Statement::Continue(Location::new(2, 26))),
-                        Box::new(Statement::Break(Location::new(2, 36))),
+                        Statement::Continue(Location::new(2, 26)),
+                        Statement::Break(Location::new(2, 36)),
                     ],
                     location: Location::new(2, 24),
                 },
@@ -1024,10 +1089,10 @@ signed short f() { return 1;}";
                 name: "f",
                 parameters: IndexMap::new(),
                 body: Statement::Block {
-                    statements: vec![Box::new(Statement::Return {
+                    statements: vec![Statement::Return {
                         expression: None,
                         location: Location::new(1, 14),
-                    })],
+                    }],
                     location: Location::new(1, 12),
                 },
                 location: Location::new(1, 1),
@@ -1042,13 +1107,13 @@ signed short f() { return 1;}";
                 name: "f",
                 parameters: IndexMap::new(),
                 body: Statement::Block {
-                    statements: vec![Box::new(Statement::Return {
+                    statements: vec![Statement::Return {
                         expression: Some(Expression::IntConst {
                             value: 1,
                             location: Location::new(2, 27),
                         }),
                         location: Location::new(2, 20),
-                    })],
+                    }],
                     location: Location::new(2, 18),
                 },
                 location: Location::new(2, 1),
@@ -1076,7 +1141,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Def {
+                statements: vec![Statement::Def {
                     declarators: vec![
                         (
                             Type::Int {
@@ -1133,10 +1198,10 @@ signed short f() { return 1;}";
                             },
                             "e",
                             Some(Expression::InitList {
-                                expressions: vec![Box::new(Expression::IntConst {
+                                expressions: vec![Expression::IntConst {
                                     value: 1,
                                     location: Location::new(1, 57),
-                                })],
+                                }],
                                 location: Location::new(1, 55),
                             }),
                         ),
@@ -1150,21 +1215,21 @@ signed short f() { return 1;}";
                             "f",
                             Some(Expression::InitList {
                                 expressions: vec![
-                                    Box::new(Expression::IntConst {
+                                    Expression::IntConst {
                                         value: 1,
                                         location: Location::new(1, 71),
-                                    }),
-                                    Box::new(Expression::IntConst {
+                                    },
+                                    Expression::IntConst {
                                         value: 2,
                                         location: Location::new(1, 74),
-                                    }),
+                                    },
                                 ],
                                 location: Location::new(1, 69),
                             }),
                         ),
                     ],
                     location: Location::new(1, 18),
-                })],
+                }],
                 location: Location::new(1, 16),
             },
             location: Location::new(1, 1),
@@ -1190,14 +1255,14 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::While {
+                statements: vec![Statement::While {
                     condition: Expression::IntConst {
                         value: 1,
                         location: Location::new(1, 26),
                     },
                     body: Box::new(Statement::Break(Location::new(1, 29))),
                     location: Location::new(1, 19),
-                })],
+                }],
                 location: Location::new(1, 17),
             },
             location: Location::new(1, 1),
@@ -1223,14 +1288,14 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Do {
+                statements: vec![Statement::Do {
                     condition: Expression::IntConst {
                         value: 1,
                         location: Location::new(1, 39),
                     },
                     body: Box::new(Statement::Break(Location::new(1, 25))),
                     location: Location::new(1, 22),
-                })],
+                }],
                 location: Location::new(1, 20),
             },
             location: Location::new(1, 1),
@@ -1256,7 +1321,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::For {
+                statements: vec![Statement::For {
                     initialization: None,
                     condition: Some(Expression::IntConst {
                         value: 1,
@@ -1265,7 +1330,7 @@ signed short f() { return 1;}";
                     increment: None,
                     body: Box::new(Statement::Break(Location::new(1, 32))),
                     location: Location::new(1, 20),
-                })],
+                }],
                 location: Location::new(1, 18),
             },
             location: Location::new(1, 1),
@@ -1291,7 +1356,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::If {
+                statements: vec![Statement::If {
                     condition: Expression::IntConst {
                         value: 1,
                         location: Location::new(1, 25),
@@ -1299,7 +1364,7 @@ signed short f() { return 1;}";
                     body: Box::new(Statement::Break(Location::new(1, 28))),
                     alternative: None,
                     location: Location::new(1, 21),
-                })],
+                }],
                 location: Location::new(1, 19),
             },
             location: Location::new(1, 1),
@@ -1325,7 +1390,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::If {
+                statements: vec![Statement::If {
                     condition: Expression::IntConst {
                         value: 1,
                         location: Location::new(1, 15),
@@ -1333,7 +1398,7 @@ signed short f() { return 1;}";
                     body: Box::new(Statement::Break(Location::new(1, 18))),
                     alternative: Some(Box::new(Statement::Continue(Location::new(1, 30)))),
                     location: Location::new(1, 11),
-                })],
+                }],
                 location: Location::new(1, 9),
             },
             location: Location::new(1, 1),
@@ -1359,7 +1424,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Switch {
+                statements: vec![Statement::Switch {
                     expression: Expression::IntConst {
                         value: 1,
                         location: Location::new(1, 19),
@@ -1369,11 +1434,11 @@ signed short f() { return 1;}";
                             value: 1,
                             location: Location::new(1, 28),
                         },
-                        vec![Box::new(Statement::Break(Location::new(1, 31)))],
+                        vec![Statement::Break(Location::new(1, 31))],
                     )],
                     default: None,
                     location: Location::new(1, 11),
-                })],
+                }],
                 location: Location::new(1, 9),
             },
             location: Location::new(1, 1),
@@ -1399,7 +1464,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Switch {
+                statements: vec![Statement::Switch {
                     expression: Expression::IntConst {
                         value: 1,
                         location: Location::new(1, 19),
@@ -1409,11 +1474,11 @@ signed short f() { return 1;}";
                             value: 1,
                             location: Location::new(1, 28),
                         },
-                        vec![Box::new(Statement::Break(Location::new(1, 31)))],
+                        vec![Statement::Break(Location::new(1, 31))],
                     )],
-                    default: Some(vec![Box::new(Statement::Continue(Location::new(1, 47)))]),
+                    default: Some(vec![Statement::Continue(Location::new(1, 47))]),
                     location: Location::new(1, 11),
-                })],
+                }],
                 location: Location::new(1, 9),
             },
             location: Location::new(1, 1),
@@ -1440,26 +1505,26 @@ signed short f() { return 1;}";
             parameters: IndexMap::new(),
             body: Statement::Block {
                 statements: vec![
-                    Box::new(Statement::Expr(Expression::Ident {
+                    Statement::Expr(Expression::Ident {
                         value: "a",
                         location: Location::new(1, 11),
-                    })),
-                    Box::new(Statement::Expr(Expression::IntConst {
+                    }),
+                    Statement::Expr(Expression::IntConst {
                         value: 1,
                         location: Location::new(1, 14),
-                    })),
-                    Box::new(Statement::Expr(Expression::FloatConst {
+                    }),
+                    Statement::Expr(Expression::FloatConst {
                         value: 1.0,
                         location: Location::new(1, 17),
-                    })),
-                    Box::new(Statement::Expr(Expression::CharConst {
+                    }),
+                    Statement::Expr(Expression::CharConst {
                         value: "'b'",
                         location: Location::new(1, 22),
-                    })),
-                    Box::new(Statement::Expr(Expression::StrConst {
+                    }),
+                    Statement::Expr(Expression::StrConst {
                         value: "\"c\"",
                         location: Location::new(1, 27),
-                    })),
+                    }),
                 ],
                 location: Location::new(1, 9),
             },
@@ -1486,7 +1551,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::IntConst {
                         value: 0,
                         location: Location::new(1, 11),
@@ -1552,7 +1617,7 @@ signed short f() { return 1;}";
                             }),
                         }),
                     }),
-                }))],
+                })],
                 location: Location::new(1, 9),
             },
             location: Location::new(1, 1),
@@ -1578,7 +1643,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::Infix {
                         left: Box::new(Expression::IntConst {
                             value: 0,
@@ -1623,7 +1688,7 @@ signed short f() { return 1;}";
                             location: Location::new(1, 27),
                         }),
                     }),
-                }))],
+                })],
                 location: Location::new(1, 9),
             },
             location: Location::new(1, 1),
@@ -1649,7 +1714,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::Infix {
                         left: Box::new(Expression::Prefix {
                             operator: "!",
@@ -1713,7 +1778,7 @@ signed short f() { return 1;}";
                             }),
                         }),
                     }),
-                }))],
+                })],
                 location: Location::new(1, 9),
             },
             location: Location::new(1, 1),
@@ -1751,7 +1816,7 @@ signed short f() { return 1;}";
             .collect(),
             body: Statement::Block {
                 statements: vec![
-                    Box::new(Statement::Expr(Expression::Infix {
+                    Statement::Expr(Expression::Infix {
                         left: Box::new(Expression::Ident {
                             value: "a",
                             location: Location::new(1, 8),
@@ -1761,8 +1826,8 @@ signed short f() { return 1;}";
                             value: 1,
                             location: Location::new(1, 12),
                         }),
-                    })),
-                    Box::new(Statement::Def {
+                    }),
+                    Statement::Def {
                         declarators: vec![(
                             Type::T {
                                 dummy_flag: true,
@@ -1777,7 +1842,7 @@ signed short f() { return 1;}";
                             }),
                         )],
                         location: Location::new(1, 15),
-                    }),
+                    },
                 ],
                 location: Location::new(1, 6),
             },
@@ -1804,7 +1869,7 @@ signed short f() { return 1;}";
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Expr(Expression::Infix {
+                statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::Index {
                         expression: Box::new(Expression::Ident {
                             value: "a",
@@ -1821,12 +1886,12 @@ signed short f() { return 1;}";
                             value: "b",
                             location: Location::new(1, 16),
                         }),
-                        arguments: vec![Box::new(Expression::IntConst {
+                        arguments: vec![Expression::IntConst {
                             value: 1,
                             location: Location::new(1, 18),
-                        })],
+                        }],
                     }),
-                }))],
+                })],
                 location: Location::new(1, 9),
             },
             location: Location::new(1, 1),

@@ -33,7 +33,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn run(&mut self) -> (Vec<Token<'a>>, Vec<Error>) {
-        while self.lines[self.line_index].len() == 0 {
+        while self.lines[self.line_index].is_empty() {
             self.line_index += 1;
         }
         loop {
@@ -41,25 +41,19 @@ impl<'a> Lexer<'a> {
             if self.get_cur_ch().is_none() {
                 break;
             }
-            match self.read_token() {
-                Ok(tk) => self.tokens.as_mut().unwrap().push(tk),
-                Err(_) => {}
+            if let Ok(tk) = self.read_token() {
+                self.tokens.as_mut().unwrap().push(tk);
             }
         }
         (self.tokens.take().unwrap(), self.errors.take().unwrap())
     }
 
     fn skip_whitespaces(&mut self) {
-        loop {
-            match self.get_cur_ch() {
-                Some(ch) => {
-                    if ch.trim_start().len() == 0 {
-                        self.forward();
-                    } else {
-                        break;
-                    }
-                }
-                None => break,
+        while let Some(ch) = self.get_cur_ch() {
+            if ch.trim_start().is_empty() {
+                self.forward();
+            } else {
+                break;
             }
         }
     }
@@ -69,7 +63,7 @@ impl<'a> Lexer<'a> {
             None
         } else {
             let line = self.lines[self.line_index];
-            Some(&line[self.char_index..self.char_index + 1])
+            Some(&line[self.char_index..=self.char_index])
         }
     }
 
@@ -85,7 +79,7 @@ impl<'a> Lexer<'a> {
         } else if self.line_index + 1 < self.lines.len() {
             self.line_index += 1;
             self.char_index = 0;
-            while self.lines[self.line_index].len() == 0 {
+            while self.lines[self.line_index].is_empty() {
                 if self.line_index + 1 < self.lines.len() {
                     self.line_index += 1;
                 } else {
@@ -211,7 +205,10 @@ impl<'a> Lexer<'a> {
                         self.forward();
                         Ok(And(self.get_location()))
                     }
-                    _ => Err(self.push_error("Invalid token `&`.")),
+                    _ => {
+                        self.push_error("Invalid token `&`.");
+                        Err(())
+                    }
                 }
             }
             Some("|") => {
@@ -221,7 +218,10 @@ impl<'a> Lexer<'a> {
                         self.forward();
                         Ok(Or(self.get_location()))
                     }
-                    _ => Err(self.push_error("Invalid token `|`.")),
+                    _ => {
+                        self.push_error("Invalid token `|`.");
+                        Err(())
+                    }
                 }
             }
             Some("!") => {
@@ -275,7 +275,10 @@ impl<'a> Lexer<'a> {
             Some("'") => self.read_char(),
             Some("\"") => self.read_str(),
             Some(ch) if self.word_regex.is_match(ch) => self.read_word(),
-            Some(ch) => Err(self.push_error(&format!("Invalid character `{}`.", ch))),
+            Some(ch) => {
+                self.push_error(&format!("Invalid character `{}`.", ch));
+                Err(())
+            }
             None => panic!("Not possible."),
         }
     }
@@ -288,17 +291,20 @@ impl<'a> Lexer<'a> {
             }
         }
         let literal = self.get_slice();
-        let literal_vec: Vec<&str> = literal.split(".").collect();
+        let literal_vec: Vec<&str> = literal.split('.').collect();
         match literal_vec.len() {
             1 => Ok(IntConst {
                 literal,
                 location: self.get_location(),
             }),
-            2 if literal_vec[0].len() != 0 && literal_vec[1].len() != 0 => Ok(FloatConst {
+            2 if !literal_vec[0].is_empty() && !literal_vec[1].is_empty() => Ok(FloatConst {
                 literal,
                 location: self.get_location(),
             }),
-            _ => Err(self.push_error(&format!("Invalid number literal `{}`.", literal))),
+            _ => {
+                self.push_error(&format!("Invalid number literal `{}`.", literal));
+                Err(())
+            }
         }
     }
 
@@ -318,7 +324,10 @@ impl<'a> Lexer<'a> {
                     break;
                 }
                 Some(_) => self.forward(),
-                None => return Err(self.push_error("Unexpected EOF.")),
+                None => {
+                    self.push_error("Unexpected EOF.");
+                    return Err(());
+                }
             }
         }
         let literal = self.get_slice();
@@ -331,7 +340,10 @@ impl<'a> Lexer<'a> {
                 literal,
                 location: self.get_location(),
             }),
-            _ => Err(self.push_error(&format!("Invalid character literal `{}`.", literal))),
+            _ => {
+                self.push_error(&format!("Invalid character literal `{}`.", literal));
+                Err(())
+            }
         }
     }
 
@@ -351,7 +363,10 @@ impl<'a> Lexer<'a> {
                     break;
                 }
                 Some(_) => self.forward(),
-                None => return Err(self.push_error("Unexpected EOF.")),
+                None => {
+                    self.push_error("Unexpected EOF.");
+                    return Err(());
+                }
             }
         }
         let literal = self.get_slice();

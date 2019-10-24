@@ -74,18 +74,27 @@ impl<'a> Serializer<'a> {
             Type::T { .. } => self.push_str_space("T"),
             Type::Void { .. } => self.push_str_space("void"),
             Type::Char { .. } => self.push_str_space("char"),
-            Type::Short { signed_flag, .. } => match signed_flag {
-                true => self.push_str_space("short"),
-                false => self.push_str_space("unsigned short"),
-            },
-            Type::Int { signed_flag, .. } => match signed_flag {
-                true => self.push_str_space("int"),
-                false => self.push_str_space("unsigned int"),
-            },
-            Type::Long { signed_flag, .. } => match signed_flag {
-                true => self.push_str_space("long"),
-                false => self.push_str_space("unsigned long"),
-            },
+            Type::Short { signed_flag, .. } => {
+                if signed_flag {
+                    self.push_str_space("short");
+                } else {
+                    self.push_str_space("unsigned short");
+                }
+            }
+            Type::Int { signed_flag, .. } => {
+                if signed_flag {
+                    self.push_str_space("int");
+                } else {
+                    self.push_str_space("unsigned int");
+                }
+            }
+            Type::Long { signed_flag, .. } => {
+                if signed_flag {
+                    self.push_str_space("long");
+                } else {
+                    self.push_str_space("unsigned long");
+                }
+            }
             Type::Float { .. } => self.push_str_space("float"),
             Type::Double { .. } => self.push_str_space("double"),
         }
@@ -140,7 +149,7 @@ impl<'a> Serializer<'a> {
                 self.push_str("(");
                 if !arguments.is_empty() {
                     for arg in arguments {
-                        self.serialize_expression(*arg);
+                        self.serialize_expression(arg);
                         self.pop_char();
                         self.push_str_space(",");
                     }
@@ -150,12 +159,12 @@ impl<'a> Serializer<'a> {
                 self.push_str_space(")");
             }
             Expression::InitList { expressions, .. } => {
-                if expressions.len() == 0 {
+                if expressions.is_empty() {
                     return self.push_str_space("{}");
                 }
                 self.push_str_space("{");
                 for expr in expressions {
-                    self.serialize_expression(*expr);
+                    self.serialize_expression(expr);
                     self.pop_char();
                     self.push_str_space(",");
                 }
@@ -167,7 +176,7 @@ impl<'a> Serializer<'a> {
     }
 
     fn serialize_statement(&mut self, stmt: Statement<'a>) {
-        if self.transformed_source.as_ref().unwrap().ends_with("\n") {
+        if self.transformed_source.as_ref().unwrap().ends_with('\n') {
             self.push_str(&" ".repeat(self.ident_level * 4));
         }
         match stmt {
@@ -193,8 +202,8 @@ impl<'a> Serializer<'a> {
                 if statements.is_empty() {
                     self.pop_char();
                 } else {
-                    for st in statements {
-                        self.serialize_statement(*st);
+                    for stmt in statements {
+                        self.serialize_statement(stmt);
                     }
                 }
                 self.ident_level -= 1;
@@ -206,23 +215,19 @@ impl<'a> Serializer<'a> {
                 self.serialize_type(r#type);
                 for (r#type, ident, init) in declarators {
                     let (array_flag, array_len) = r#type.get_array();
-                    match array_flag {
-                        true => {
-                            self.push_str(ident);
-                            self.push_str("[");
-                            if let Some(len) = array_len {
-                                self.push_str(&len.to_string());
-                            }
-                            self.push_str_space("]");
+                    if array_flag {
+                        self.push_str(ident);
+                        self.push_str("[");
+                        if let Some(len) = array_len {
+                            self.push_str(&len.to_string());
                         }
-                        false => self.push_str_space(ident),
+                        self.push_str_space("]");
+                    } else {
+                        self.push_str_space(ident);
                     }
-                    match init {
-                        Some(ex) => {
-                            self.push_str_space("=");
-                            self.serialize_expression(ex);
-                        }
-                        None => {}
+                    if let Some(ex) = init {
+                        self.push_str_space("=");
+                        self.serialize_expression(ex);
                     }
                     self.pop_char();
                     self.push_str_space(",");
@@ -272,20 +277,14 @@ impl<'a> Serializer<'a> {
                     None => self.push_str_space(""),
                 }
                 self.push_str_space(";");
-                match condition {
-                    Some(ex) => {
-                        self.serialize_expression(ex);
-                        self.pop_char();
-                    }
-                    None => {}
+                if let Some(ex) = condition {
+                    self.serialize_expression(ex);
+                    self.pop_char();
                 }
                 self.push_str_space(";");
-                match increment {
-                    Some(ex) => {
-                        self.serialize_expression(ex);
-                        self.pop_char();
-                    }
-                    None => {}
+                if let Some(ex) = increment {
+                    self.serialize_expression(ex);
+                    self.pop_char();
                 }
                 self.push_str_space(")");
                 self.serialize_statement(*body);
@@ -302,13 +301,10 @@ impl<'a> Serializer<'a> {
                 self.pop_char();
                 self.push_str_space(")");
                 self.serialize_statement(*body);
-                match alternative {
-                    Some(st) => {
-                        self.pop_char();
-                        self.push_str_space(" else");
-                        self.serialize_statement(*st);
-                    }
-                    None => {}
+                if let Some(st) = alternative {
+                    self.pop_char();
+                    self.push_str_space(" else");
+                    self.serialize_statement(*st);
                 }
             }
             Statement::Switch {
@@ -324,29 +320,26 @@ impl<'a> Serializer<'a> {
                 self.push_str_space(")");
                 self.push_str_newline("{");
                 self.ident_level += 1;
-                for (label, sts) in branches {
+                for (label, stmts) in branches {
                     self.push_str(&" ".repeat(self.ident_level * 4));
                     self.push_str_space("case");
                     self.serialize_expression(label);
                     self.pop_char();
                     self.push_str_newline(":");
                     self.ident_level += 1;
-                    for st in sts {
-                        self.serialize_statement(*st);
+                    for stmt in stmts {
+                        self.serialize_statement(stmt);
                     }
                     self.ident_level -= 1;
                 }
-                match default {
-                    Some(sts) => {
-                        self.push_str(&" ".repeat(self.ident_level * 4));
-                        self.push_str_newline("default:");
-                        self.ident_level += 1;
-                        for st in sts {
-                            self.serialize_statement(*st);
-                        }
-                        self.ident_level -= 1;
+                if let Some(stmts) = default {
+                    self.push_str(&" ".repeat(self.ident_level * 4));
+                    self.push_str_newline("default:");
+                    self.ident_level += 1;
+                    for stmt in stmts {
+                        self.serialize_statement(stmt);
                     }
-                    None => {}
+                    self.ident_level -= 1;
                 }
                 self.ident_level -= 1;
                 self.push_str(&" ".repeat(self.ident_level * 4));

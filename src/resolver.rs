@@ -126,13 +126,10 @@ impl<'a> Resolver<'a> {
                     _ => func.r#type = return_type,
                 }
                 for (param, r#type) in &parameters {
-                    match r#type {
-                        Type::T { .. } => {
-                            let message =
-                                format!("Unresolved parameter `{}` in function `{}`.", param, name);
-                            self.push_error(&message, location);
-                        }
-                        _ => {}
+                    if let Type::T { .. } = r#type {
+                        let message =
+                            format!("Unresolved parameter `{}` in function `{}`.", param, name);
+                        self.push_error(&message, location);
                     }
                 }
                 func.parameters = parameters;
@@ -349,7 +346,7 @@ impl<'a> Resolver<'a> {
                 self.symbol_table.enter();
                 let statements: Vec<_> = statements
                     .into_iter()
-                    .map(|stmt| Box::new(self.resolve_statement(*stmt)))
+                    .map(|stmt| self.resolve_statement(stmt))
                     .collect();
                 self.symbol_table.leave();
                 Statement::Block {
@@ -412,7 +409,7 @@ impl<'a> Resolver<'a> {
                 let (r#type, condition, generic_ident) = self.resolve_expression(condition);
                 self.symbol_table
                     .update_generic_ident(generic_ident, dummy_int_signed);
-                if let Err(_) = self.unify_types(dummy_int_signed, r#type) {
+                if self.unify_types(dummy_int_signed, r#type).is_err() {
                     let message = format!(
                         "Expect `{}` as the loop condition, get `{}`.",
                         dummy_int_signed, r#type
@@ -434,7 +431,7 @@ impl<'a> Resolver<'a> {
                 let (r#type, condition, generic_ident) = self.resolve_expression(condition);
                 self.symbol_table
                     .update_generic_ident(generic_ident, dummy_int_signed);
-                if let Err(_) = self.unify_types(dummy_int_signed, r#type) {
+                if self.unify_types(dummy_int_signed, r#type).is_err() {
                     let message = format!(
                         "Expect `{}` as the loop condition, get `{}`.",
                         dummy_int_signed, r#type
@@ -485,7 +482,7 @@ impl<'a> Resolver<'a> {
                 let (r#type, condition, generic_ident) = self.resolve_expression(condition);
                 self.symbol_table
                     .update_generic_ident(generic_ident, dummy_int_signed);
-                if let Err(_) = self.unify_types(dummy_int_signed, r#type) {
+                if self.unify_types(dummy_int_signed, r#type).is_err() {
                     let message = format!("Expect `{}`, get `{}`.", dummy_int_signed, r#type);
                     self.push_error(&message, location);
                 }
@@ -514,7 +511,7 @@ impl<'a> Resolver<'a> {
                         let label = self.resolve_expression(label).1;
                         let stmts: Vec<_> = stmts
                             .into_iter()
-                            .map(|stmt| Box::new(self.resolve_statement(*stmt)))
+                            .map(|stmt| self.resolve_statement(stmt))
                             .collect();
                         (label, stmts)
                     })
@@ -523,7 +520,7 @@ impl<'a> Resolver<'a> {
                     Some(stmts) => {
                         let stmts: Vec<_> = stmts
                             .into_iter()
-                            .map(|stmt| Box::new(self.resolve_statement(*stmt)))
+                            .map(|stmt| self.resolve_statement(stmt))
                             .collect();
                         Some(stmts)
                     }
@@ -618,42 +615,42 @@ impl<'a> Resolver<'a> {
             },
             Expression::IntConst { value, location } => {
                 let str_value = format!("{}", value);
-                if let Ok(_) = str_value.parse::<i16>() {
+                if str_value.parse::<i16>().is_ok() {
                     return (
                         dummy_short_signed,
                         Expression::IntConst { value, location },
                         None,
                     );
                 }
-                if let Ok(_) = str_value.parse::<u16>() {
+                if str_value.parse::<u16>().is_ok() {
                     return (
                         dummy_short_unsigned,
                         Expression::IntConst { value, location },
                         None,
                     );
                 }
-                if let Ok(_) = str_value.parse::<i32>() {
+                if str_value.parse::<i32>().is_ok() {
                     return (
                         dummy_int_signed,
                         Expression::IntConst { value, location },
                         None,
                     );
                 }
-                if let Ok(_) = str_value.parse::<u32>() {
+                if str_value.parse::<u32>().is_ok() {
                     return (
                         dummy_int_unsigned,
                         Expression::IntConst { value, location },
                         None,
                     );
                 }
-                if let Ok(_) = str_value.parse::<i64>() {
+                if str_value.parse::<i64>().is_ok() {
                     return (
                         dummy_long_signed,
                         Expression::IntConst { value, location },
                         None,
                     );
                 }
-                if let Ok(_) = str_value.parse::<u64>() {
+                if str_value.parse::<u64>().is_ok() {
                     return (
                         dummy_long_unsigned,
                         Expression::IntConst { value, location },
@@ -666,14 +663,14 @@ impl<'a> Resolver<'a> {
             }
             Expression::FloatConst { value, location } => {
                 let str_value = format!("{}", value);
-                if let Ok(_) = str_value.parse::<f32>() {
+                if str_value.parse::<f32>().is_ok() {
                     return (
                         dummy_float,
                         Expression::FloatConst { value, location },
                         None,
                     );
                 }
-                if let Ok(_) = str_value.parse::<f64>() {
+                if str_value.parse::<f64>().is_ok() {
                     return (
                         dummy_double,
                         Expression::FloatConst { value, location },
@@ -704,7 +701,7 @@ impl<'a> Resolver<'a> {
                 };
                 self.symbol_table
                     .update_generic_ident(generic_ident, expected_type);
-                if let Err(_) = self.unify_types(expected_type, r#type) {
+                if self.unify_types(expected_type, r#type).is_err() {
                     let message = format!(
                         "Expect `{}` after `{}`, get `{}`.",
                         expected_type, operator, r#type
@@ -738,7 +735,7 @@ impl<'a> Resolver<'a> {
                         }
                     },
                     "+=" | "-=" | "*=" | "/=" | "%=" | "+" | "-" | "*" | "/" | "%" => {
-                        if let Err(_) = self.unify_types(dummy_double, type_right) {
+                        if self.unify_types(dummy_double, type_right).is_err() {
                             let message = format!("Expect a number after `{}`.", operator);
                             self.push_error(&message, location);
                             dummy_t
@@ -757,7 +754,7 @@ impl<'a> Resolver<'a> {
                         }
                     }
                     "||" | "&&" => {
-                        if let Err(_) = self.unify_types(dummy_int_signed, type_right) {
+                        if self.unify_types(dummy_int_signed, type_right).is_err() {
                             let message =
                                 format!("Expect {} after `{}`.", dummy_int_signed, operator);
                             self.push_error(&message, location);
@@ -777,7 +774,7 @@ impl<'a> Resolver<'a> {
                         }
                     }
                     "==" | "!=" | "<" | ">" | "<=" | ">=" => {
-                        if let Err(_) = self.unify_types(type_left, type_right) {
+                        if self.unify_types(type_left, type_right).is_err() {
                             let message =
                                 format!("`{}` and `{}` cannot be unified.", type_left, type_right);
                             self.push_error(&message, location);
@@ -883,15 +880,15 @@ impl<'a> Resolver<'a> {
                     .into_iter()
                     .zip(parameters.iter())
                     .map(|(arg, (param, type_param))| {
-                        let (type_arg, arg, _) = self.resolve_expression(*arg);
-                        if let Err(_) = self.unify_types(*type_param, type_arg) {
+                        let (type_arg, arg, _) = self.resolve_expression(arg);
+                        if self.unify_types(*type_param, type_arg).is_err() {
                             let message = format!(
                                 "Expect `{}` for `{}`, get `{}`.",
                                 type_param, param, type_arg
                             );
                             self.push_error(&message, location);
                         }
-                        Box::new(arg)
+                        arg
                     })
                     .collect();
                 (
@@ -912,7 +909,7 @@ impl<'a> Resolver<'a> {
                 let expressions: Vec<_> = expressions
                     .into_iter()
                     .map(|expr| {
-                        let (typ, expr, generic_ident) = self.resolve_expression(*expr);
+                        let (typ, expr, generic_ident) = self.resolve_expression(expr);
                         generic_idents.push(generic_ident);
                         match self.unify_types(r#type, typ) {
                             Ok((typ, _)) => {
@@ -927,7 +924,7 @@ impl<'a> Resolver<'a> {
                                 self.push_error(&message, location);
                             }
                         }
-                        Box::new(expr)
+                        expr
                     })
                     .collect();
                 if err_flag {
@@ -1092,7 +1089,7 @@ main() {
                 .collect(),
                 body: Statement::Block {
                     statements: vec![
-                        Box::new(Statement::Def {
+                        Statement::Def {
                             declarators: vec![(
                                 Type::Short {
                                     signed_flag: true,
@@ -1102,16 +1099,16 @@ main() {
                                 },
                                 "b",
                                 Some(Expression::InitList {
-                                    expressions: vec![Box::new(Expression::IntConst {
+                                    expressions: vec![Expression::IntConst {
                                         value: 1,
                                         location: Location::new(3, 16),
-                                    })],
+                                    }],
                                     location: Location::new(3, 14),
                                 }),
                             )],
                             location: Location::new(3, 5),
-                        }),
-                        Box::new(Statement::Return {
+                        },
+                        Statement::Return {
                             expression: Some(Expression::Index {
                                 expression: Box::new(Expression::Ident {
                                     value: "b",
@@ -1123,7 +1120,7 @@ main() {
                                 }),
                             }),
                             location: Location::new(4, 5),
-                        }),
+                        },
                     ],
                     location: Location::new(2, 10),
                 },
@@ -1139,7 +1136,7 @@ main() {
                 parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![
-                        Box::new(Statement::Def {
+                        Statement::Def {
                             declarators: vec![(
                                 Type::Short {
                                     signed_flag: true,
@@ -1157,11 +1154,11 @@ main() {
                                 }),
                             )],
                             location: Location::new(8, 5),
-                        }),
-                        Box::new(Statement::Return {
+                        },
+                        Statement::Return {
                             expression: None,
                             location: Location::new(9, 5),
-                        }),
+                        },
                     ],
                     location: Location::new(7, 8),
                 },
@@ -1199,13 +1196,13 @@ main() {
             .cloned()
             .collect(),
             body: Statement::Block {
-                statements: vec![Box::new(Statement::Return {
+                statements: vec![Statement::Return {
                     expression: Some(Expression::Ident {
                         value: "a",
                         location: Location::new(1, 22),
                     }),
                     location: Location::new(1, 15),
-                })],
+                }],
                 location: Location::new(1, 13),
             },
             location: Location::new(1, 1),
