@@ -44,8 +44,12 @@ impl fmt::Display for Error {
         use Error::*;
 
         match self {
-            Lexing { message, location } => write!(f, "{} ({}): {}", "Lexing Error".red(), location, message),
-            Parsing { message, location } => write!(f, "{} ({}): {}", "Parsing Error".red(), location, message),
+            Lexing { message, location } => {
+                write!(f, "{} ({}): {}", "Lexing Error".red(), location, message)
+            }
+            Parsing { message, location } => {
+                write!(f, "{} ({}): {}", "Parsing Error".red(), location, message)
+            }
             Resolving { message, location } => {
                 write!(f, "{} ({}): {}", "Resolving Error".red(), location, message)
             }

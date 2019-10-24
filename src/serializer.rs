@@ -21,6 +21,7 @@ impl<'a> Serializer<'a> {
             .unwrap()
             .into_iter()
             .for_each(|func| self.serialize_function(func));
+        self.pop_char();
         self.transformed_source.take().unwrap()
     }
 
@@ -65,6 +66,7 @@ impl<'a> Serializer<'a> {
         }
         self.push_str_space(")");
         self.serialize_statement(body);
+        self.push_str_newline("");
     }
 
     fn serialize_type(&mut self, r#type: Type) {
@@ -374,14 +376,23 @@ unsigned long f() {}
 float f() {}
 double f() {}";
         let expected_transformed_source = "void f() {}
+
 char f(int a) {}
+
 short f(int a, float b) {}
+
 int f() {}
+
 long f() {}
+
 unsigned short f() {}
+
 unsigned int f() {}
+
 unsigned long f() {}
+
 float f() {}
+
 double f() {}\n";
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();

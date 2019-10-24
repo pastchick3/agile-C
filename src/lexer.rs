@@ -33,6 +33,9 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn run(&mut self) -> (Vec<Token<'a>>, Vec<Error>) {
+        while self.lines[self.line_index].len() == 0 {
+            self.line_index += 1;
+        }
         loop {
             self.skip_whitespaces();
             if self.get_cur_ch().is_none() {
