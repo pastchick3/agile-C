@@ -1,3 +1,5 @@
+//! A parser producing a generic AST to the following resolver.
+
 use std::collections::HashSet;
 
 use indexmap::IndexMap;
@@ -6,6 +8,7 @@ use crate::structure::{
     Array, Error, Expression, Function, Locate, Location, Statement, Token, Type,
 };
 
+/// A structure containg name infromations in different scopes.
 struct Environment {
     envs: Vec<HashSet<String>>,
 }
@@ -35,6 +38,9 @@ impl Environment {
     }
 }
 
+/// A parser producing a generic AST to the following resolver.
+/// The word "generic" here means the parser will insert dummy
+/// type parameters if the user does not spell them out.
 pub struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     errors: Option<Vec<Error>>,
@@ -86,6 +92,7 @@ impl<'a> Parser<'a> {
     }
 
     fn get_prefix_precedence(&self) -> u8 {
+        // Larger numbers mean higher priorities.
         match self.tokens.last() {
             Some(Token::Not(_)) => 15,
             Some(Token::Plus(_)) => 15,
@@ -97,6 +104,7 @@ impl<'a> Parser<'a> {
     }
 
     fn get_infix_precedence(&self) -> u8 {
+        // Larger numbers mean higher priorities.
         match self.tokens.last() {
             Some(Token::Equal(_)) => 2,
             Some(Token::PlusEq(_)) => 2,
@@ -137,7 +145,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_function(&mut self) -> Result<Function<'a>, ()> {
+        // Enter a new scope.
         self.environment.enter();
+        // Record the function location.
         let location = match self.tokens.last() {
             Some(tk) => tk.locate(),
             None => {
@@ -145,7 +155,9 @@ impl<'a> Parser<'a> {
                 return Err(());
             }
         };
+        // Parse the return type.
         let r#type = self.parse_type()?;
+        // Parse the function name.
         let name = match self.tokens.pop() {
             Some(Token::Ident { literal, .. }) => literal,
             Some(tk) => {
@@ -157,6 +169,7 @@ impl<'a> Parser<'a> {
                 return Err(());
             }
         };
+        // Parse the parameter list.
         match self.tokens.pop() {
             Some(Token::LParen(_)) => {}
             Some(tk) => {
@@ -204,8 +217,11 @@ impl<'a> Parser<'a> {
                 }
             },
         }
+        // Parse the function body.
         let body = self.parse_statement()?;
+        // Leave the scope.
         self.environment.leave();
+        // Return the function node.
         Ok(Function {
             r#type,
             name,
@@ -577,14 +593,17 @@ impl<'a> Parser<'a> {
         let mut declarators = Vec::new();
         loop {
             match self.tokens.pop() {
+                // Parse the identifier.
                 Some(Token::Ident { literal, .. }) => {
                     self.environment.define(literal);
                     match self.tokens.last() {
+                        // Parse a plain variable.
                         Some(Token::Equal(_)) => {
                             self.tokens.pop();
                             let value = self.parse_expression(0)?;
                             declarators.push((r#type, literal, Some(value)));
                         }
+                        // Parse an array.
                         Some(Token::LBracket(_)) => {
                             let lbracket = self.tokens.pop();
                             let array_len = match self.tokens.last() {
@@ -616,6 +635,7 @@ impl<'a> Parser<'a> {
                         }
                         _ => declarators.push((r#type, literal, None)),
                     }
+                    // Parse delimiter.
                     match self.tokens.pop() {
                         Some(Token::Comma(_)) => {}
                         Some(Token::Semicolon(_)) => break,
@@ -650,6 +670,7 @@ impl<'a> Parser<'a> {
     fn parse_statement_expr(&mut self) -> Result<Statement<'a>, ()> {
         let expr = self.parse_expression(0)?;
         self.assert_token("Semicolon")?;
+        // Transform an expression statement to a definition if the name is not defined yet.
         match expr {
             Expression::Infix {
                 left,

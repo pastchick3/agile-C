@@ -1,3 +1,5 @@
+//! A serializer serializing a complete AST to a output string.
+
 use crate::structure::{Array, Expression, Function, Statement, Type};
 
 pub struct Serializer<'a> {

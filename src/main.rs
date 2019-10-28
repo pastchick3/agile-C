@@ -1,16 +1,26 @@
-use std::env;
 use std::fs;
+use std::path::PathBuf;
 use std::process;
+
+use structopt::StructOpt;
 
 use agile_c::Transpiler;
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "Agile C")]
+struct Opt {
+    /// The path to the input file.
+    #[structopt(short, long)]
+    input: PathBuf,
+
+    /// The path to the output file.
+    #[structopt(short, long)]
+    output: PathBuf,
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("The input filename and the output filename are required.");
-        process::exit(1);
-    }
-    let source = fs::read_to_string(&args[1]).unwrap_or_else(|err| {
+    let opt = Opt::from_args();
+    let source = fs::read_to_string(opt.input).unwrap_or_else(|err| {
         eprintln!("Fail to read the input file: {}.", err);
         process::exit(1);
     });
@@ -22,7 +32,7 @@ fn main() {
         eprintln!("Fail to transform the source: {}", err);
         process::exit(1);
     });
-    fs::write(&args[2], &transformed_source).unwrap_or_else(|err| {
+    fs::write(opt.output, &transformed_source).unwrap_or_else(|err| {
         eprintln!("Fail to write the output file: {}.", err);
         process::exit(1);
     });

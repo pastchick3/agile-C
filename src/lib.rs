@@ -1,3 +1,5 @@
+//! A type inference transpiler for C programming language
+
 mod lexer;
 mod parser;
 mod resolver;
@@ -14,6 +16,11 @@ pub struct Transpiler {
 }
 
 impl Transpiler {
+    /// Instantiate a transpiler.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the source is empty.
     pub fn new(source: &str) -> Result<Transpiler, String> {
         if source.is_empty() {
             Err("Empty source file is not allowed.".to_string())
@@ -24,6 +31,11 @@ impl Transpiler {
         }
     }
 
+    /// Run the transpilation process, and return the transpiled program.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an formatted error string if transpilation fails.
     pub fn run(&self) -> Result<String, String> {
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&self.source, errors).run();

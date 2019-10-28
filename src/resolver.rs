@@ -1,9 +1,12 @@
+//! A resolver producing a complete AST to the following serializer.
+
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
 
 use crate::structure::{Array, Error, Expression, Function, Locate, Location, Statement, Type};
 
+/// A structure containg names and their type information.
 struct SymbolTable<'a> {
     functions: HashMap<&'a str, (Type, IndexMap<&'a str, Type>)>,
     tables: Vec<HashMap<&'a str, Type>>,
@@ -68,6 +71,9 @@ impl<'a> SymbolTable<'a> {
     }
 }
 
+/// A resolver producing a complete AST to the following serializer.
+/// It will go through the generic AST and infer concrete types for
+/// all generic type parameters.
 pub struct Resolver<'a> {
     generic_ast: Option<Vec<Function<'a>>>,
     errors: Option<Vec<Error>>,
@@ -84,6 +90,8 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn run(&mut self) -> (Vec<Function<'a>>, Vec<Error>) {
+        // Load all functions' names into the symbol table before actual inference.
+        // Fail and return if there are multiple functions with the same name.
         let mut multi_func_flag = false;
         let ast: Vec<_> = self
             .generic_ast
@@ -108,10 +116,12 @@ impl<'a> Resolver<'a> {
         if multi_func_flag {
             return (ast, self.errors.take().unwrap());
         }
+        // Perform type inference for every function.
         let ast: Vec<_> = ast
             .into_iter()
             .map(|func| self.resolve_function(func))
             .collect();
+        // Merge type information of functions in the symbol table back to AST.
         let ast: Vec<_> = ast
             .into_iter()
             .map(|mut func| {
@@ -147,6 +157,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn unify_types(&self, type_left: Type, type_right: Type) -> Result<(Type, Type), ()> {
+        // Conceptually, we are trying to find type constraints that allow an assignment from type_right to type_left.
         use Type::*;
 
         match type_left {
@@ -263,10 +274,12 @@ impl<'a> Resolver<'a> {
         } = function;
         self.symbol_table.current_func = Some(name);
         self.symbol_table.enter();
+        // Load parameters as local variables.
         for (param, r#type) in &parameters {
             self.symbol_table.insert(param, *r#type);
         }
         let body = self.resolve_statement(body);
+        // Merge type information of parameters back to functions.
         let mut new_parameters = IndexMap::new();
         for param in parameters.keys() {
             let r#type = self.symbol_table.get(param).unwrap();
@@ -540,6 +553,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         expression: Expression<'a>,
     ) -> (Type, Expression<'a>, Option<&'a str>) {
+        // Gnerally, the function will return these dummy type objects.
         let dummy_t = Type::T {
             dummy_flag: true,
             array_flag: false,
@@ -685,7 +699,7 @@ impl<'a> Resolver<'a> {
                 (dummy_char, Expression::CharConst { value, location })
             }
             Expression::StrConst { value, location } => {
-                // self.push_error("Str (char *) has not been implemented.", location);
+                // TODO: StrConst type (char *) has not been implemented.
                 (dummy_t, Expression::StrConst { value, location })
             }
             Expression::Prefix {
@@ -854,6 +868,7 @@ impl<'a> Resolver<'a> {
                 expression,
                 arguments,
             } => {
+                // TODO: Type inference between arguments and parameters.
                 let name = match *expression {
                     Expression::Ident { value, .. } => value,
                     _ => panic!("The function name in a function call now must be a StrConst."),

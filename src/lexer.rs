@@ -1,8 +1,11 @@
+//! A lexer producing tokens to the following parser.
+
 use regex::Regex;
 
 use crate::structure::{Error, Location, Token};
 use Token::*;
 
+/// A lexer producing tokens to the following parser.
 pub struct Lexer<'a> {
     lines: Vec<&'a str>,
     start_line_index: usize,
@@ -38,7 +41,7 @@ impl<'a> Lexer<'a> {
         }
         loop {
             self.skip_whitespaces();
-            if self.get_cur_ch().is_none() {
+            if self.eof {
                 break;
             }
             if let Ok(tk) = self.read_token() {
@@ -73,12 +76,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn forward(&mut self) {
+        // This function must ensure self.get_cur_ch() will never fail except EOF.
         let line = self.lines[self.line_index];
         if self.char_index + 1 < line.len() {
             self.char_index += 1;
         } else if self.line_index + 1 < self.lines.len() {
             self.line_index += 1;
             self.char_index = 0;
+            // Skip empty lines.
             while self.lines[self.line_index].is_empty() {
                 if self.line_index + 1 < self.lines.len() {
                     self.line_index += 1;

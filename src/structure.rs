@@ -1,12 +1,16 @@
+//! A collection of all basic structures which will be shared among modules.
+
 use std::fmt;
 
 use colored::*;
 use indexmap::IndexMap;
 
+/// Provide a simple way to locate an object in the source file.
 pub trait Locate {
     fn locate(&self) -> Location;
 }
 
+/// Record a specific location in the source file using its line number and character number.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Location {
     pub line_no: usize,
@@ -32,6 +36,7 @@ impl fmt::Display for Location {
     }
 }
 
+/// General Error enum used in other modules.
 #[derive(Debug, PartialEq)]
 pub enum Error {
     Lexing { message: String, location: Location },
@@ -57,6 +62,7 @@ impl fmt::Display for Error {
     }
 }
 
+/// Definition for tokens.
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
     Ident {
@@ -165,11 +171,13 @@ impl<'a> Locate for Token<'a> {
     }
 }
 
+/// Provide functions to manipulate array definitions in a type declaration.
 pub trait Array {
     fn set_array(&self, array_flag: bool, array_len: Option<usize>) -> Type;
     fn get_array(&self) -> (bool, Option<usize>);
 }
 
+/// AST nodes for type declarations.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Type {
     T {
@@ -368,6 +376,7 @@ impl fmt::Display for Type {
     }
 }
 
+/// AST nodes for expressions.
 #[derive(Debug, PartialEq)]
 pub enum Expression<'a> {
     Ident {
@@ -438,6 +447,7 @@ impl<'a> Locate for Expression<'a> {
     }
 }
 
+/// AST nodes for statements.
 #[derive(Debug, PartialEq)]
 pub enum Statement<'a> {
     Continue(Location),
@@ -503,6 +513,7 @@ impl<'a> Locate for Statement<'a> {
     }
 }
 
+/// AST nodes for functions.
 #[derive(Debug, PartialEq)]
 pub struct Function<'a> {
     pub r#type: Type,
