@@ -47,7 +47,7 @@ Agile C is written in pure [Rust](https://www.rust-lang.org/), and is distribute
 That's all. Pretty simple. Following sections provide more in-depth explanations of how Agile C works.
 - [Architecture](#Architecture) shows the module structure of Agile C and the general workflow.
 - [Parsing](#Parsing) describes the general idea about how Agile C parses a program and inserts dummy type parameters.
-- [Inference](#Inference) provides a detailed explanation about how Agile C perform type inference.
+- [Resolving](#Resolving) provides a detailed explanation about how Agile C perform type inference.
 - [TODO](#TODO) lists features and bugs that I am currently working on.
 - [Grammar](#Grammar) lists currently supported C grammer in BNF.
 
@@ -73,7 +73,7 @@ For functions' return types and parameters, generally the parser knows there sho
 
 For variable definitions, the parser will maintain a environment object for each scope, which is a hash set containing name of variables defined in the current scope. When the parser produces a assignment expression, it will search those environment objects, and if the variable being assigned is not defined yet, the parser will transform this assignment expression into a definition statement with a dummy type specifier `T`.
 
-## Inference
+## Resolving
 
 Type inference is in essential an automatic detection of the data type of expressions and variables given some context information including literals whose types are trivially known, variables whose types are known, and constraints imposed by language semantics.
 
@@ -113,7 +113,7 @@ return generic_ast
 
 When resolving statements, we are actaully resolving expressions in them, and there are two statements where resolved expression types will be associated with some other type or variables. The first one is the `Return` statement where the type of the expression (`void` if no expression) will be associated with the function's return type. The second one is the `Def` statement where types of initializers will be associated with variables being defined.
 
-This association process is known as "type unification", and conceptually, we can think type unification as trying to determine whether an assignment from a value with `type_right` to a variable with `type_left` is legal, and if these two types are not fully specified, whether we can make the assignment legal by further specifing their types. The resolver use a 3-step algorithm given below to determine whether a given unification is legal or not (`-` means the same type as its original type). Also notice in current implementation, every type object has an array flag and an pointer flag associated with it, so we can check whether a type (variable) is an array or a pointer.
+This association process is known as "type unification", and conceptually, we can think type unification as trying to determine whether an assignment from a value with `type_right` to a variable with `type_left` is legal, and if these two types are not fully specified, whether we can make the assignment legal by further specifing their types. The resolver use a 3-step algorithm given below to determine whether a given unification is legal or not. Also notice in current implementation, every type object has an array flag and an pointer flag associated with it, so we can check whether a type (variable) is an array or a pointer.
 
 ```
 input: type_left, type_right
@@ -127,23 +127,23 @@ if type_left == Void and type_right == Void
     return (type_left, type_right)
 if type_left and type_right are not both arrays or pointers
     return error
-if the combination of type_left and type_right is in the rule table (below)
-    return the inferred result from the table
+if the combination of type_left and type_right is recorded in the table below
+    return (type_left, type_right)
 else
     return error
 ```
 
-| `type_left` | `type_right` | Inferred `type_left` | Inferred `type_right` |
-| --- | --- | --- | --- |
-| `char` | `char` | `char` | `char` |
-| `short` | `char` or `short` | `-` | `-` |
-| `unsigned short` | `char` or ` unsigned short` | `-` | `-` |
-| `int` | `char` or `short` or `unsigned short` or `int` | `-` | `-` |
-| `unsigned int` | `char` or `short` or ` unsigned short` or `unsigned int` | `-` | `-` |
-| `long` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` | `-` | `-` |
-| `unsigned long` | `char` or `short` or ` unsigned short` or `int` or `unsigned int` or `unsigned long` | `-` | `-` |
-| `float` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` or `unsigned long` or `float` | `-` | `-` |
-| `double` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` or `unsigned long` or `float` or `double` | `-` | `-` |
+| `type_left` | `type_right` |
+| --- | --- |
+| `char` | `char` |
+| `short` | `char` or `short` |
+| `unsigned short` | `char` or ` unsigned short` |
+| `int` | `char` or `short` or `unsigned short` or `int` |
+| `unsigned int` | `char` or `short` or ` unsigned short` or `unsigned int` |
+| `long` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` |
+| `unsigned long` | `char` or `short` or ` unsigned short` or `int` or `unsigned int` or `unsigned long` |
+| `float` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` or `unsigned long` or `float` |
+| `double` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` or `unsigned long` or `float` or `double` |
 
 Then we need to resolve expressions to obtain `type_right`. The resolver will first recursively destructure an expression back to five primary expressions: `Ident`, `IntConst`, `FloatConst`, `CharConst`, and `StrConst`.
 
