@@ -1,46 +1,60 @@
-//! A collection of all basic structures which will be shared among modules.
+//! Basic structures which will be used among multiple modules.
 
+use std::cmp::PartialEq;
 use std::fmt;
 
 use colored::*;
 use indexmap::IndexMap;
 
-/// Provide a simple way to locate an object in the source file.
+/// Types that can locate itself in the source file.
+///
+/// All sturctures in this module except `Error` implement this trait.
 pub trait Locate {
+    /// Return the location in the source file.
     fn locate(&self) -> Location;
 }
 
-/// Record a specific location in the source file using its line number and character number.
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub struct Location {
-    pub line_no: usize,
-    pub char_no: usize,
+/// Flag for array types.
+///
+/// Only `Type` implements this trait.
+pub trait Array {
+    /// Change the array flag of the `Type` object.
+    ///
+    /// if `array_flag` is `true`, this object represents an array type
+    /// with the length of `array_len`. `array_len` is `None` either
+    /// because this object does not represent an array type or the length
+    /// is unspecified in the definition.
+    fn set_array(&self, array_flag: bool, array_len: Option<usize>) -> Type;
+
+    /// Retrieve `(array_flag, array_len)` from the object.
+    fn get_array(&self) -> (bool, Option<usize>);
 }
 
-impl Location {
-    pub fn new(line_no: usize, char_no: usize) -> Location {
-        Location { line_no, char_no }
-    }
+/// Flag for pointer types.
+///
+/// Only `Type` implements this trait.
+pub trait Pointer {
+    /// Change the pointer flag of the `Type` object.
+    ///
+    /// If `pointer_flag` is `true`, this object represents an pointer type.
+    fn set_pointer_flag(&self, pointer_flag: bool) -> Type;
 
-    pub fn empty() -> Location {
-        Location {
-            line_no: 0,
-            char_no: 0,
-        }
-    }
+    /// Retrieve `pointer_flag` from the Object.
+    fn get_pointer_flag(&self) -> bool;
 }
 
-impl fmt::Display for Location {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.line_no, self.char_no)
-    }
-}
-
-/// General Error enum used in other modules.
+/// Represent all possible errors may occur during the transpilation.
+///
+/// Notice the serializer should never produce an error.
 #[derive(Debug, PartialEq)]
 pub enum Error {
+    /// Errors that occurs during lexing.
     Lexing { message: String, location: Location },
+
+    /// Errors that occurs during parsing.
     Parsing { message: String, location: Location },
+
+    /// Errors that occurs during type inference.
     Resolving { message: String, location: Location },
 }
 
@@ -62,7 +76,42 @@ impl fmt::Display for Error {
     }
 }
 
-/// Definition for tokens.
+/// Represent a specific location in the source file.
+#[derive(Debug, Clone, Copy)]
+pub struct Location {
+    pub line_no: usize,
+    pub char_no: usize,
+}
+
+impl Location {
+    pub fn new(line_no: usize, char_no: usize) -> Location {
+        Location { line_no, char_no }
+    }
+
+    /// Constructor used in dummy `Type` objects.
+    pub fn empty() -> Location {
+        Location {
+            line_no: 0,
+            char_no: 0,
+        }
+    }
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line_no, self.char_no)
+    }
+}
+
+impl PartialEq for Location {
+    fn eq(&self, _other: &Self) -> bool {
+        // `Location` will never be directly compared, and we want other
+        // structures which only different in `Location` to be compared equal.
+        true
+    }
+}
+
+/// Tokens used by the lexer.
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
     Ident {
@@ -141,6 +190,7 @@ pub enum Token<'a> {
     Break(Location),
     Return(Location),
 
+    Ampersand(Location),
     Comma(Location),
     Colon(Location),
     Semicolon(Location),
@@ -165,63 +215,64 @@ impl<'a> Locate for Token<'a> {
             | AsteriskEq(loc) | SlashEq(loc) | PercentEq(loc) | LParen(loc) | RParen(loc)
             | LBracket(loc) | RBracket(loc) | LBrace(loc) | RBrace(loc) | Switch(loc)
             | Case(loc) | Default(loc) | If(loc) | Else(loc) | Do(loc) | While(loc) | For(loc)
-            | Continue(loc) | Break(loc) | Return(loc) | Comma(loc) | Colon(loc)
-            | Semicolon(loc) => *loc,
+            | Continue(loc) | Break(loc) | Return(loc) | Ampersand(loc) | Comma(loc)
+            | Colon(loc) | Semicolon(loc) => *loc,
         }
     }
-}
-
-/// Provide functions to manipulate array definitions in a type declaration.
-pub trait Array {
-    fn set_array(&self, array_flag: bool, array_len: Option<usize>) -> Type;
-    fn get_array(&self) -> (bool, Option<usize>);
 }
 
 /// AST nodes for type declarations.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Type {
     T {
-        dummy_flag: bool,
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
     Void {
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
     Char {
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
     Short {
         signed_flag: bool,
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
     Int {
         signed_flag: bool,
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
     Long {
         signed_flag: bool,
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
     Float {
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
     Double {
         array_flag: bool,
         array_len: Option<usize>,
+        pointer_flag: bool,
         location: Location,
     },
 }
@@ -232,63 +283,89 @@ impl Array for Type {
 
         match self {
             T {
-                dummy_flag,
+                pointer_flag,
                 location,
                 ..
             } => T {
-                dummy_flag: *dummy_flag,
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
-            Void { location, .. } => Void {
+            Void {
+                pointer_flag,
+                location,
+                ..
+            } => Void {
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
-            Char { location, .. } => Char {
+            Char {
+                pointer_flag,
+                location,
+                ..
+            } => Char {
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
             Short {
                 signed_flag,
+                pointer_flag,
                 location,
                 ..
             } => Short {
                 signed_flag: *signed_flag,
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
             Int {
                 signed_flag,
+                pointer_flag,
                 location,
                 ..
             } => Int {
                 signed_flag: *signed_flag,
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
             Long {
                 signed_flag,
+                pointer_flag,
                 location,
                 ..
             } => Long {
                 signed_flag: *signed_flag,
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
-            Float { location, .. } => Float {
+            Float {
+                pointer_flag,
+                location,
+                ..
+            } => Float {
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
-            Double { location, .. } => Double {
+            Double {
+                pointer_flag,
+                location,
+                ..
+            } => Double {
                 array_flag,
                 array_len,
+                pointer_flag: *pointer_flag,
                 location: *location,
             },
         }
@@ -342,6 +419,124 @@ impl Array for Type {
     }
 }
 
+impl Pointer for Type {
+    fn set_pointer_flag(&self, pointer_flag: bool) -> Type {
+        use Type::*;
+
+        match *self {
+            T {
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => T {
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+            Void {
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Void {
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+            Char {
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Char {
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+            Short {
+                signed_flag,
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Short {
+                signed_flag,
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+            Int {
+                signed_flag,
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Int {
+                signed_flag,
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+            Long {
+                signed_flag,
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Long {
+                signed_flag,
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+            Float {
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Float {
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+            Double {
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Double {
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
+        }
+    }
+
+    fn get_pointer_flag(&self) -> bool {
+        use Type::*;
+
+        match self {
+            T { pointer_flag, .. } => *pointer_flag,
+            Void { pointer_flag, .. } => *pointer_flag,
+            Char { pointer_flag, .. } => *pointer_flag,
+            Short { pointer_flag, .. } => *pointer_flag,
+            Int { pointer_flag, .. } => *pointer_flag,
+            Long { pointer_flag, .. } => *pointer_flag,
+            Float { pointer_flag, .. } => *pointer_flag,
+            Double { pointer_flag, .. } => *pointer_flag,
+        }
+    }
+}
+
 impl<'a> Locate for Type {
     fn locate(&self) -> Location {
         use Type::*;
@@ -372,6 +567,62 @@ impl fmt::Display for Type {
             Long { .. } => write!(f, "long"),
             Float { .. } => write!(f, "float"),
             Double { .. } => write!(f, "double"),
+        }
+    }
+}
+
+impl Type {
+    /// Constructor for dummy `Type` objects in the resolver.
+    pub fn make_dummy(name: &str, signed_flag: bool, array_flag: bool, pointer_flag: bool) -> Type {
+        use Type::*;
+
+        match name {
+            "T" => Type::T {
+                array_flag,
+                array_len: None,
+                pointer_flag,
+                location: Location::empty(),
+            },
+            "Char" => Type::Char {
+                array_flag,
+                array_len: None,
+                pointer_flag,
+                location: Location::empty(),
+            },
+            "Short" => Short {
+                signed_flag,
+                array_flag,
+                array_len: None,
+                pointer_flag,
+                location: Location::empty(),
+            },
+            "Int" => Int {
+                signed_flag,
+                array_flag,
+                array_len: None,
+                pointer_flag,
+                location: Location::empty(),
+            },
+            "Long" => Long {
+                signed_flag,
+                array_flag,
+                array_len: None,
+                pointer_flag,
+                location: Location::empty(),
+            },
+            "Float" => Float {
+                array_flag,
+                array_len: None,
+                pointer_flag,
+                location: Location::empty(),
+            },
+            "Double" => Double {
+                array_flag,
+                array_len: None,
+                pointer_flag,
+                location: Location::empty(),
+            },
+            _ => unreachable!(),
         }
     }
 }

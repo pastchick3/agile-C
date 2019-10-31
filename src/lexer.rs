@@ -1,11 +1,15 @@
-//! A lexer producing tokens to the following parser.
+//! A lexer producing a vector of tokens.
 
 use regex::Regex;
 
 use crate::structure::{Error, Location, Token};
 use Token::*;
 
-/// A lexer producing tokens to the following parser.
+/// A lexer producing a vector of tokens for the parser.
+///
+/// The lexer first records the start location (`start_line_index` and`start_char_index`)
+/// and then scans the source (`line_index` and `char_index`). When a token is produced,
+/// the lexer will slice the source from the start position to the current position.
 pub struct Lexer<'a> {
     lines: Vec<&'a str>,
     start_line_index: usize,
@@ -36,6 +40,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn run(&mut self) -> (Vec<Token<'a>>, Vec<Error>) {
+        // Skip initial empty lines.
         while self.lines[self.line_index].is_empty() {
             self.line_index += 1;
         }
@@ -61,6 +66,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Notice this function will return `None` only when EOF.
     fn get_cur_ch(&self) -> Option<&'a str> {
         if self.eof {
             None
@@ -72,14 +78,25 @@ impl<'a> Lexer<'a> {
 
     fn get_slice(&self) -> &'a str {
         let line = self.lines[self.start_line_index];
-        &line[self.start_char_index..self.char_index]
+        if self.char_index == 0 {
+            &line[self.start_char_index..]
+        } else {
+            &line[self.start_char_index..self.char_index]
+        }
     }
 
+    fn get_location(&self) -> Location {
+        Location::new(self.start_line_index + 1, self.start_char_index + 1)
+    }
+
+    /// This function will automatically go to the next line to make
+    /// sure `get_cur_ch()` returns `None` only when EOF.
     fn forward(&mut self) {
-        // This function must ensure self.get_cur_ch() will never fail except EOF.
         let line = self.lines[self.line_index];
+        // Not at the end a line.
         if self.char_index + 1 < line.len() {
             self.char_index += 1;
+        // At the end of a line.
         } else if self.line_index + 1 < self.lines.len() {
             self.line_index += 1;
             self.char_index = 0;
@@ -92,6 +109,7 @@ impl<'a> Lexer<'a> {
                     break;
                 }
             }
+        // At EOF.
         } else {
             self.char_index += 1;
             self.eof = true;
@@ -104,10 +122,6 @@ impl<'a> Lexer<'a> {
             message: message.to_string(),
             location,
         });
-    }
-
-    fn get_location(&self) -> Location {
-        Location::new(self.start_line_index + 1, self.start_char_index + 1)
     }
 
     fn read_token(&mut self) -> Result<Token<'a>, ()> {
@@ -210,10 +224,7 @@ impl<'a> Lexer<'a> {
                         self.forward();
                         Ok(And(self.get_location()))
                     }
-                    _ => {
-                        self.push_error("Invalid token `&`.");
-                        Err(())
-                    }
+                    _ => Ok(Ampersand(self.get_location())),
                 }
             }
             Some("|") => {
@@ -426,45 +437,88 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ident_location() {
+        let source = "a b \n \n c";
+        let expected_errors = vec![];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(tokens.len(), 3);
+        match tokens[0] {
+            Ident {
+                literal: "a",
+                location:
+                    Location {
+                        line_no: 1,
+                        char_no: 1,
+                    },
+            } => {}
+            _ => panic!(format!("{:?}", tokens[0])),
+        }
+        match tokens[1] {
+            Ident {
+                literal: "b",
+                location:
+                    Location {
+                        line_no: 1,
+                        char_no: 3,
+                    },
+            } => {}
+            _ => panic!(format!("{:?}", tokens[1])),
+        }
+        match tokens[2] {
+            Ident {
+                literal: "c",
+                location:
+                    Location {
+                        line_no: 3,
+                        char_no: 2,
+                    },
+            } => {}
+            _ => panic!(format!("{:?}", tokens[2])),
+        }
+    }
+
+    #[test]
     fn ident_const() {
         let source = "a 1 1.1 '\\n' '\\'' 'a' \"\\n\" \"\\\"\" \"a\"";
         let expected_errors = vec![];
         let expected_tokens = vec![
             Ident {
                 literal: "a",
-                location: Location::new(1, 1),
+                location: Location::empty(),
             },
             IntConst {
                 literal: "1",
-                location: Location::new(1, 3),
+                location: Location::empty(),
             },
             FloatConst {
                 literal: "1.1",
-                location: Location::new(1, 5),
+                location: Location::empty(),
             },
             CharConst {
                 literal: "'\\n'",
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
             CharConst {
                 literal: "'\\''",
-                location: Location::new(1, 14),
+                location: Location::empty(),
             },
             CharConst {
                 literal: "'a'",
-                location: Location::new(1, 19),
+                location: Location::empty(),
             },
             StrConst {
                 literal: "\"\\n\"",
-                location: Location::new(1, 23),
+                location: Location::empty(),
             },
             StrConst {
                 literal: "\"\\\"\"",
-                location: Location::new(1, 28),
+                location: Location::empty(),
             },
             StrConst {
                 literal: "\"a\"",
-                location: Location::new(1, 33),
+                location: Location::empty(),
             },
         ];
         let errors = Vec::new();
@@ -478,16 +532,16 @@ mod tests {
         let source = "T void char short int long float double signed unsigned";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            T(Location::new(1, 1)),
-            Void(Location::new(1, 3)),
-            Char(Location::new(1, 8)),
-            Short(Location::new(1, 13)),
-            Int(Location::new(1, 19)),
-            Long(Location::new(1, 23)),
-            Float(Location::new(1, 28)),
-            Double(Location::new(1, 34)),
-            Signed(Location::new(1, 41)),
-            Unsigned(Location::new(1, 48)),
+            T(Location::empty()),
+            Void(Location::empty()),
+            Char(Location::empty()),
+            Short(Location::empty()),
+            Int(Location::empty()),
+            Long(Location::empty()),
+            Float(Location::empty()),
+            Double(Location::empty()),
+            Signed(Location::empty()),
+            Unsigned(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -500,14 +554,14 @@ mod tests {
         let source = "+ - * / % ++ -- =\n\n";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Plus(Location::new(1, 1)),
-            Minus(Location::new(1, 3)),
-            Asterisk(Location::new(1, 5)),
-            Slash(Location::new(1, 7)),
-            Percent(Location::new(1, 9)),
-            BiPlus(Location::new(1, 11)),
-            BiMinus(Location::new(1, 14)),
-            Equal(Location::new(1, 17)),
+            Plus(Location::empty()),
+            Minus(Location::empty()),
+            Asterisk(Location::empty()),
+            Slash(Location::empty()),
+            Percent(Location::empty()),
+            BiPlus(Location::empty()),
+            BiMinus(Location::empty()),
+            Equal(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -520,15 +574,15 @@ mod tests {
         let source = "< > <= >= == != && || !";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Small(Location::new(1, 1)),
-            Large(Location::new(1, 3)),
-            SmallEq(Location::new(1, 5)),
-            LargeEq(Location::new(1, 8)),
-            EqTo(Location::new(1, 11)),
-            NotEqTo(Location::new(1, 14)),
-            And(Location::new(1, 17)),
-            Or(Location::new(1, 20)),
-            Not(Location::new(1, 23)),
+            Small(Location::empty()),
+            Large(Location::empty()),
+            SmallEq(Location::empty()),
+            LargeEq(Location::empty()),
+            EqTo(Location::empty()),
+            NotEqTo(Location::empty()),
+            And(Location::empty()),
+            Or(Location::empty()),
+            Not(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -541,11 +595,11 @@ mod tests {
         let source = "+= -= *= /= %=";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            PlusEq(Location::new(1, 1)),
-            MinusEq(Location::new(1, 4)),
-            AsteriskEq(Location::new(1, 7)),
-            SlashEq(Location::new(1, 10)),
-            PercentEq(Location::new(1, 13)),
+            PlusEq(Location::empty()),
+            MinusEq(Location::empty()),
+            AsteriskEq(Location::empty()),
+            SlashEq(Location::empty()),
+            PercentEq(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -558,12 +612,12 @@ mod tests {
         let source = "( ) [ ] { }";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            LParen(Location::new(1, 1)),
-            RParen(Location::new(1, 3)),
-            LBracket(Location::new(1, 5)),
-            RBracket(Location::new(1, 7)),
-            LBrace(Location::new(1, 9)),
-            RBrace(Location::new(1, 11)),
+            LParen(Location::empty()),
+            RParen(Location::empty()),
+            LBracket(Location::empty()),
+            RBracket(Location::empty()),
+            LBrace(Location::empty()),
+            RBrace(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -576,17 +630,17 @@ mod tests {
         let source = "switch case default if else do while for continue break return";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Switch(Location::new(1, 1)),
-            Case(Location::new(1, 8)),
-            Default(Location::new(1, 13)),
-            If(Location::new(1, 21)),
-            Else(Location::new(1, 24)),
-            Do(Location::new(1, 29)),
-            While(Location::new(1, 32)),
-            For(Location::new(1, 38)),
-            Continue(Location::new(1, 42)),
-            Break(Location::new(1, 51)),
-            Return(Location::new(1, 57)),
+            Switch(Location::empty()),
+            Case(Location::empty()),
+            Default(Location::empty()),
+            If(Location::empty()),
+            Else(Location::empty()),
+            Do(Location::empty()),
+            While(Location::empty()),
+            For(Location::empty()),
+            Continue(Location::empty()),
+            Break(Location::empty()),
+            Return(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -599,9 +653,9 @@ mod tests {
         let source = ", : \n ;";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Comma(Location::new(1, 1)),
-            Colon(Location::new(1, 3)),
-            Semicolon(Location::new(2, 2)),
+            Comma(Location::empty()),
+            Colon(Location::empty()),
+            Semicolon(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -611,40 +665,36 @@ mod tests {
 
     #[test]
     fn error() {
-        let source = "1 & | .1 1. 1.1.1 \'ab\' \'";
+        let source = "1 | .1 1. 1.1.1 \'ab\' \'";
         let expected_errors = vec![
             Error::Lexing {
-                message: "Invalid token `&`.".to_string(),
-                location: Location::new(1, 3),
-            },
-            Error::Lexing {
                 message: "Invalid token `|`.".to_string(),
-                location: Location::new(1, 5),
+                location: Location::empty(),
             },
             Error::Lexing {
                 message: "Invalid number literal `.1`.".to_string(),
-                location: Location::new(1, 7),
+                location: Location::empty(),
             },
             Error::Lexing {
                 message: "Invalid number literal `1.`.".to_string(),
-                location: Location::new(1, 10),
+                location: Location::empty(),
             },
             Error::Lexing {
                 message: "Invalid number literal `1.1.1`.".to_string(),
-                location: Location::new(1, 13),
+                location: Location::empty(),
             },
             Error::Lexing {
                 message: "Invalid character literal `\'ab\'`.".to_string(),
-                location: Location::new(1, 19),
+                location: Location::empty(),
             },
             Error::Lexing {
                 message: "Unexpected EOF.".to_string(),
-                location: Location::new(1, 24),
+                location: Location::empty(),
             },
         ];
         let expected_tokens = vec![IntConst {
             literal: "1",
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -657,7 +707,7 @@ mod tests {
         let source = "\"";
         let expected_errors = vec![Error::Lexing {
             message: "Unexpected EOF.".to_string(),
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let expected_tokens = vec![];
         let errors = Vec::new();

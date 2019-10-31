@@ -1,6 +1,6 @@
 //! A serializer serializing a complete AST to a output string.
 
-use crate::structure::{Array, Expression, Function, Statement, Type};
+use crate::structure::{Array, Expression, Function, Pointer, Statement, Type};
 
 pub struct Serializer<'a> {
     ast: Option<Vec<Function<'a>>>,
@@ -217,6 +217,7 @@ impl<'a> Serializer<'a> {
                 self.serialize_type(r#type);
                 for (r#type, ident, init) in declarators {
                     let (array_flag, array_len) = r#type.get_array();
+                    let pointer_flag = r#type.get_pointer_flag();
                     if array_flag {
                         self.push_str(ident);
                         self.push_str("[");
@@ -224,6 +225,9 @@ impl<'a> Serializer<'a> {
                             self.push_str(&len.to_string());
                         }
                         self.push_str_space("]");
+                    } else if pointer_flag {
+                        self.push_str("*");
+                        self.push_str_space(ident);
                     } else {
                         self.push_str_space(ident);
                     }
@@ -434,6 +438,7 @@ double f() {}\n";
             int b = 1;
             int c, d = 2;
             int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
+            int *h, *i = &a, j = *i;
 
             while (1) {
                 continue;
@@ -468,6 +473,7 @@ double f() {}\n";
     int b = 1;
     int c, d = 2;
     int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
+    int *h, *i = &a, j = *i;
     while (1) {
         continue;
     }

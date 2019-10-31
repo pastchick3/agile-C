@@ -1,14 +1,14 @@
-//! A parser producing a generic AST to the following resolver.
+//! A parser producing a vector of functions which may contain unresolved dummy types.
 
 use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
 use crate::structure::{
-    Array, Error, Expression, Function, Locate, Location, Statement, Token, Type,
+    Array, Error, Expression, Function, Locate, Location, Pointer, Statement, Token, Type,
 };
 
-/// A structure containg name infromations in different scopes.
+/// A structure containg names defined in different scopes.
 struct Environment {
     envs: Vec<HashSet<String>>,
 }
@@ -38,9 +38,17 @@ impl Environment {
     }
 }
 
-/// A parser producing a generic AST to the following resolver.
-/// The word "generic" here means the parser will insert dummy
-/// type parameters if the user does not spell them out.
+/// A parser producing a vector of functions which may contain unresolved generic types.
+///
+/// It is a Pratt parser (operator-precedence parser) with small tweaks on how it parses
+/// potentially missing type specifiers. Now the parser can handle missing type specifiers
+/// in three places.
+///
+/// For missing functions' return types and parameters, the parser will insert dummy type `T`.
+///
+/// For missing types in variable definitions, the parser will consel the environment object,
+/// and transform an assignment to an undefined variable into a definition statement of that
+/// variable with a dummy type `T`.
 pub struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     errors: Option<Vec<Error>>,
@@ -50,7 +58,7 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(mut tokens: Vec<Token<'a>>, errors: Vec<Error>) -> Parser<'a> {
-        tokens.reverse();
+        tokens.reverse(); // We will use `Vector.pop()` and `Vector.last()` to get tokens.
         Parser {
             tokens,
             errors: Some(errors),
@@ -72,6 +80,8 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// Assert the next token's type. `forward()` will be called once only
+    /// if the assertion succeeds.
     fn assert_token(&mut self, name: &str) -> Result<Token, ()> {
         match self.tokens.pop() {
             Some(tk) => {
@@ -91,20 +101,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Larger numbers mean higher priorities.
     fn get_prefix_precedence(&self) -> u8 {
-        // Larger numbers mean higher priorities.
         match self.tokens.last() {
             Some(Token::Not(_)) => 15,
             Some(Token::Plus(_)) => 15,
             Some(Token::Minus(_)) => 15,
             Some(Token::BiPlus(_)) => 15,
             Some(Token::BiMinus(_)) => 15,
+            Some(Token::Ampersand(_)) => 15,
+            Some(Token::Asterisk(_)) => 15,
             _ => 0,
         }
     }
 
+    // Larger numbers mean higher priorities.
     fn get_infix_precedence(&self) -> u8 {
-        // Larger numbers mean higher priorities.
         match self.tokens.last() {
             Some(Token::Equal(_)) => 2,
             Some(Token::PlusEq(_)) => 2,
@@ -234,47 +246,54 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Result<Type, ()> {
         match self.tokens.pop() {
             Some(Token::T(location)) => Ok(Type::T {
-                dummy_flag: false,
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Void(location)) => Ok(Type::Void {
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Char(location)) => Ok(Type::Char {
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Short(location)) => Ok(Type::Short {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Int(location)) => Ok(Type::Int {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Long(location)) => Ok(Type::Long {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Float(location)) => Ok(Type::Float {
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Double(location)) => Ok(Type::Double {
                 array_flag: false,
                 array_len: None,
+                pointer_flag: false,
                 location,
             }),
             Some(Token::Signed(location)) => match self.tokens.pop() {
@@ -282,18 +301,21 @@ impl<'a> Parser<'a> {
                     signed_flag: true,
                     array_flag: false,
                     array_len: None,
+                    pointer_flag: false,
                     location,
                 }),
                 Some(Token::Int(_)) => Ok(Type::Int {
                     signed_flag: true,
                     array_flag: false,
                     array_len: None,
+                    pointer_flag: false,
                     location,
                 }),
                 Some(Token::Long(_)) => Ok(Type::Long {
                     signed_flag: true,
                     array_flag: false,
                     array_len: None,
+                    pointer_flag: false,
                     location,
                 }),
                 Some(tk) => {
@@ -314,18 +336,21 @@ impl<'a> Parser<'a> {
                     signed_flag: false,
                     array_flag: false,
                     array_len: None,
+                    pointer_flag: false,
                     location,
                 }),
                 Some(Token::Int(_)) => Ok(Type::Int {
                     signed_flag: false,
                     array_flag: false,
                     array_len: None,
+                    pointer_flag: false,
                     location,
                 }),
                 Some(Token::Long(_)) => Ok(Type::Long {
                     signed_flag: false,
                     array_flag: false,
                     array_len: None,
+                    pointer_flag: false,
                     location,
                 }),
                 Some(tk) => {
@@ -344,9 +369,9 @@ impl<'a> Parser<'a> {
             Some(tk) => {
                 self.tokens.push(tk);
                 Ok(Type::T {
-                    dummy_flag: true,
                     array_flag: false,
                     array_len: None,
+                    pointer_flag: false,
                     location: Location::empty(),
                 })
             }
@@ -358,6 +383,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> Result<Statement<'a>, ()> {
+        while let Some(Token::Semicolon(_)) = self.tokens.last() {
+            self.tokens.pop();
+        }
         match self.tokens.pop() {
             Some(Token::Continue(loc)) => self.parse_statement_continue(loc),
             Some(Token::Break(loc)) => self.parse_statement_break(loc),
@@ -406,6 +434,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement_return(&mut self, location: Location) -> Result<Statement<'a>, ()> {
+        // Parse `return;`.
         if let Some(Token::Semicolon(_)) = self.tokens.last() {
             self.tokens.pop();
             return Ok(Statement::Return {
@@ -413,6 +442,7 @@ impl<'a> Parser<'a> {
                 location,
             });
         }
+        // Parse `return expr;`.
         match self.parse_expression(0) {
             Err(_) => match self.assert_token("Semicolon") {
                 _ => Err(()),
@@ -536,6 +566,7 @@ impl<'a> Parser<'a> {
         let mut branches = Vec::new();
         loop {
             match self.tokens.pop() {
+                // Parse `case`.
                 Some(Token::Case(_)) => {
                     let expr = self.parse_expression(0)?;
                     self.assert_token("Colon")?;
@@ -550,6 +581,7 @@ impl<'a> Parser<'a> {
                     }
                     branches.push((expr, stmts));
                 }
+                // Parse `default`.
                 Some(tk @ Token::Default(_)) => {
                     if default.is_some() {
                         self.push_error("Multiple default.", Some(&tk));
@@ -592,12 +624,18 @@ impl<'a> Parser<'a> {
         let location = r#type.locate();
         let mut declarators = Vec::new();
         loop {
+            // Check for pointer types.
+            let mut pointer_flag = false;
+            if let Some(Token::Asterisk { .. }) = self.tokens.last() {
+                self.tokens.pop();
+                pointer_flag = true;
+            }
             match self.tokens.pop() {
-                // Parse the identifier.
                 Some(Token::Ident { literal, .. }) => {
+                    let r#type = r#type.set_pointer_flag(pointer_flag);
                     self.environment.define(literal);
                     match self.tokens.last() {
-                        // Parse a plain variable.
+                        // Parse a plain variable or a pointer.
                         Some(Token::Equal(_)) => {
                             self.tokens.pop();
                             let value = self.parse_expression(0)?;
@@ -635,7 +673,7 @@ impl<'a> Parser<'a> {
                         }
                         _ => declarators.push((r#type, literal, None)),
                     }
-                    // Parse delimiter.
+                    // Parse the delimiter.
                     match self.tokens.pop() {
                         Some(Token::Comma(_)) => {}
                         Some(Token::Semicolon(_)) => break,
@@ -670,7 +708,7 @@ impl<'a> Parser<'a> {
     fn parse_statement_expr(&mut self) -> Result<Statement<'a>, ()> {
         let expr = self.parse_expression(0)?;
         self.assert_token("Semicolon")?;
-        // Transform an expression statement to a definition if the name is not defined yet.
+        // Transform an assignment to a definition if the name is not defined yet.
         match expr {
             Expression::Infix {
                 left,
@@ -681,9 +719,9 @@ impl<'a> Parser<'a> {
                     if !self.environment.is_defined(value) {
                         self.environment.define(value);
                         let r#type = Type::T {
-                            dummy_flag: true,
                             array_flag: false,
                             array_len: None,
+                            pointer_flag: false,
                             location: Location::empty(),
                         };
                         Ok(Statement::Def {
@@ -785,6 +823,16 @@ impl<'a> Parser<'a> {
             }),
             Some(Token::BiMinus(location)) => Ok(Expression::Prefix {
                 operator: "--",
+                expression: Box::new(self.parse_expression(precedence)?),
+                location,
+            }),
+            Some(Token::Ampersand(location)) => Ok(Expression::Prefix {
+                operator: "&",
+                expression: Box::new(self.parse_expression(precedence)?),
+                location,
+            }),
+            Some(Token::Asterisk(location)) => Ok(Expression::Prefix {
+                operator: "*",
                 expression: Box::new(self.parse_expression(precedence)?),
                 location,
             }),
@@ -971,18 +1019,18 @@ mod tests {
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::T {
-                dummy_flag: false,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
                 statements: vec![],
-                location: Location::new(1, 7),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -999,7 +1047,8 @@ mod tests {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: [(
@@ -1008,17 +1057,18 @@ mod tests {
                     signed_flag: true,
                     array_flag: false,
                     array_len: None,
-                    location: Location::new(1, 8),
+                    pointer_flag: false,
+                    location: Location::empty(),
                 },
             )]
             .iter()
             .cloned()
             .collect(),
             body: Statement::Block {
-                statements: vec![Statement::Continue(Location::new(1, 17))],
-                location: Location::new(1, 15),
+                statements: vec![Statement::Continue(Location::empty())],
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1029,8 +1079,13 @@ mod tests {
 
     #[test]
     fn function_multiple() {
-        let source = "short f() {}
-int f(long a, float b) { continue; break; }";
+        let source = "
+            short f() {}
+            int f(long a, float b) {
+                continue;
+                break;
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
@@ -1038,22 +1093,24 @@ int f(long a, float b) { continue; break; }";
                     signed_flag: true,
                     array_flag: false,
                     array_len: None,
-                    location: Location::new(1, 1),
+                    pointer_flag: false,
+                    location: Location::empty(),
                 },
                 name: "f",
                 parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![],
-                    location: Location::new(1, 11),
+                    location: Location::empty(),
                 },
-                location: Location::new(1, 1),
+                location: Location::empty(),
             },
             Function {
                 r#type: Type::Int {
                     signed_flag: true,
                     array_flag: false,
                     array_len: None,
-                    location: Location::new(2, 1),
+                    pointer_flag: false,
+                    location: Location::empty(),
                 },
                 name: "f",
                 parameters: [
@@ -1063,7 +1120,8 @@ int f(long a, float b) { continue; break; }";
                             signed_flag: true,
                             array_flag: false,
                             array_len: None,
-                            location: Location::new(2, 7),
+                            pointer_flag: false,
+                            location: Location::empty(),
                         },
                     ),
                     (
@@ -1071,7 +1129,8 @@ int f(long a, float b) { continue; break; }";
                         Type::Float {
                             array_flag: false,
                             array_len: None,
-                            location: Location::new(2, 15),
+                            pointer_flag: false,
+                            location: Location::empty(),
                         },
                     ),
                 ]
@@ -1080,12 +1139,12 @@ int f(long a, float b) { continue; break; }";
                 .collect(),
                 body: Statement::Block {
                     statements: vec![
-                        Statement::Continue(Location::new(2, 26)),
-                        Statement::Break(Location::new(2, 36)),
+                        Statement::Continue(Location::empty()),
+                        Statement::Break(Location::empty()),
                     ],
-                    location: Location::new(2, 24),
+                    location: Location::empty(),
                 },
-                location: Location::new(2, 1),
+                location: Location::empty(),
             },
         ];
         let errors = Vec::new();
@@ -1097,33 +1156,37 @@ int f(long a, float b) { continue; break; }";
 
     #[test]
     fn statement_return() {
-        let source = "double f() { return;}
-signed short f() { return 1;}";
+        let source = "
+            double f() { return; }
+            signed short f() { return 1; }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             Function {
                 r#type: Type::Double {
                     array_flag: false,
                     array_len: None,
-                    location: Location::new(1, 1),
+                    pointer_flag: false,
+                    location: Location::empty(),
                 },
                 name: "f",
                 parameters: IndexMap::new(),
                 body: Statement::Block {
                     statements: vec![Statement::Return {
                         expression: None,
-                        location: Location::new(1, 14),
+                        location: Location::empty(),
                     }],
-                    location: Location::new(1, 12),
+                    location: Location::empty(),
                 },
-                location: Location::new(1, 1),
+                location: Location::empty(),
             },
             Function {
                 r#type: Type::Short {
                     signed_flag: true,
                     array_flag: false,
                     array_len: None,
-                    location: Location::new(2, 1),
+                    pointer_flag: false,
+                    location: Location::empty(),
                 },
                 name: "f",
                 parameters: IndexMap::new(),
@@ -1131,13 +1194,13 @@ signed short f() { return 1;}";
                     statements: vec![Statement::Return {
                         expression: Some(Expression::IntConst {
                             value: 1,
-                            location: Location::new(2, 27),
+                            location: Location::empty(),
                         }),
-                        location: Location::new(2, 20),
+                        location: Location::empty(),
                     }],
-                    location: Location::new(2, 18),
+                    location: Location::empty(),
                 },
-                location: Location::new(2, 1),
+                location: Location::empty(),
             },
         ];
         let errors = Vec::new();
@@ -1149,15 +1212,19 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_def() {
-        let source =
-            "signed int f() { int a = 1, b, c[0], d[] = {}, e[1] = { 1 }, f[2] = { 1, 2 }; }";
+        let source = "
+            signed int f() {
+                int a = 1, b, c[0], d[] = {}, e[1] = { 1 }, f[2] = { 1, 2 }, *g, *h = &a, i = *g;
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Int {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1169,12 +1236,13 @@ signed short f() { return 1;}";
                                 signed_flag: true,
                                 array_flag: false,
                                 array_len: None,
-                                location: Location::new(1, 18),
+                                pointer_flag: false,
+                                location: Location::empty(),
                             },
                             "a",
                             Some(Expression::IntConst {
                                 value: 1,
-                                location: Location::new(1, 26),
+                                location: Location::empty(),
                             }),
                         ),
                         (
@@ -1182,7 +1250,8 @@ signed short f() { return 1;}";
                                 signed_flag: true,
                                 array_flag: false,
                                 array_len: None,
-                                location: Location::new(1, 18),
+                                pointer_flag: false,
+                                location: Location::empty(),
                             },
                             "b",
                             None,
@@ -1192,7 +1261,8 @@ signed short f() { return 1;}";
                                 signed_flag: true,
                                 array_flag: true,
                                 array_len: Some(0),
-                                location: Location::new(1, 18),
+                                pointer_flag: false,
+                                location: Location::empty(),
                             },
                             "c",
                             None,
@@ -1202,12 +1272,13 @@ signed short f() { return 1;}";
                                 signed_flag: true,
                                 array_flag: true,
                                 array_len: None,
-                                location: Location::new(1, 18),
+                                pointer_flag: false,
+                                location: Location::empty(),
                             },
                             "d",
                             Some(Expression::InitList {
                                 expressions: vec![],
-                                location: Location::new(1, 44),
+                                location: Location::empty(),
                             }),
                         ),
                         (
@@ -1215,15 +1286,16 @@ signed short f() { return 1;}";
                                 signed_flag: true,
                                 array_flag: true,
                                 array_len: Some(1),
-                                location: Location::new(1, 18),
+                                pointer_flag: false,
+                                location: Location::empty(),
                             },
                             "e",
                             Some(Expression::InitList {
                                 expressions: vec![Expression::IntConst {
                                     value: 1,
-                                    location: Location::new(1, 57),
+                                    location: Location::empty(),
                                 }],
-                                location: Location::new(1, 55),
+                                location: Location::empty(),
                             }),
                         ),
                         (
@@ -1231,29 +1303,77 @@ signed short f() { return 1;}";
                                 signed_flag: true,
                                 array_flag: true,
                                 array_len: Some(2),
-                                location: Location::new(1, 18),
+                                pointer_flag: false,
+                                location: Location::empty(),
                             },
                             "f",
                             Some(Expression::InitList {
                                 expressions: vec![
                                     Expression::IntConst {
                                         value: 1,
-                                        location: Location::new(1, 71),
+                                        location: Location::empty(),
                                     },
                                     Expression::IntConst {
                                         value: 2,
-                                        location: Location::new(1, 74),
+                                        location: Location::empty(),
                                     },
                                 ],
-                                location: Location::new(1, 69),
+                                location: Location::empty(),
+                            }),
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: true,
+                                location: Location::empty(),
+                            },
+                            "g",
+                            None,
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: true,
+                                location: Location::empty(),
+                            },
+                            "h",
+                            Some(Expression::Prefix {
+                                operator: "&",
+                                expression: Box::new(Expression::Ident {
+                                    value: "a",
+                                    location: Location::empty(),
+                                }),
+                                location: Location::empty(),
+                            }),
+                        ),
+                        (
+                            Type::Int {
+                                signed_flag: true,
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                location: Location::empty(),
+                            },
+                            "i",
+                            Some(Expression::Prefix {
+                                operator: "*",
+                                expression: Box::new(Expression::Ident {
+                                    value: "g",
+                                    location: Location::empty(),
+                                }),
+                                location: Location::empty(),
                             }),
                         ),
                     ],
-                    location: Location::new(1, 18),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 16),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1264,14 +1384,20 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_while() {
-        let source = "signed long f() { while (1) break; }";
+        let source = "
+            signed long f() {
+                while (1)
+                    break;
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Long {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1279,14 +1405,14 @@ signed short f() { return 1;}";
                 statements: vec![Statement::While {
                     condition: Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 26),
+                        location: Location::empty(),
                     },
-                    body: Box::new(Statement::Break(Location::new(1, 29))),
-                    location: Location::new(1, 19),
+                    body: Box::new(Statement::Break(Location::empty())),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 17),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1297,14 +1423,21 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_do() {
-        let source = "unsigned short f() { do break; while (1); }";
+        let source = "
+            unsigned short f() {
+                do
+                    break;
+                while (1);
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Short {
                 signed_flag: false,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1312,14 +1445,14 @@ signed short f() { return 1;}";
                 statements: vec![Statement::Do {
                     condition: Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 39),
+                        location: Location::empty(),
                     },
-                    body: Box::new(Statement::Break(Location::new(1, 25))),
-                    location: Location::new(1, 22),
+                    body: Box::new(Statement::Break(Location::empty())),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 20),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1330,14 +1463,20 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_for() {
-        let source = "unsigned int f() { for (; 1; ) break; }";
+        let source = "
+            unsigned int f() {
+                for (; 1; )
+                    break;
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Int {
                 signed_flag: false,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1346,15 +1485,15 @@ signed short f() { return 1;}";
                     initialization: None,
                     condition: Some(Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 27),
+                        location: Location::empty(),
                     }),
                     increment: None,
-                    body: Box::new(Statement::Break(Location::new(1, 32))),
-                    location: Location::new(1, 20),
+                    body: Box::new(Statement::Break(Location::empty())),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 18),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1365,14 +1504,20 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_if() {
-        let source = "unsigned long f() { if (1) break; }";
+        let source = "
+            unsigned long f() {
+                if (1)
+                    break;
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Long {
                 signed_flag: false,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1380,15 +1525,15 @@ signed short f() { return 1;}";
                 statements: vec![Statement::If {
                     condition: Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 25),
+                        location: Location::empty(),
                     },
-                    body: Box::new(Statement::Break(Location::new(1, 28))),
+                    body: Box::new(Statement::Break(Location::empty())),
                     alternative: None,
-                    location: Location::new(1, 21),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 19),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1399,14 +1544,22 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_if_else() {
-        let source = "int f() { if (1) break; else continue; }";
+        let source = "
+            int f() {
+                if (1)
+                    break;
+                else
+                    continue;
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Int {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1414,15 +1567,15 @@ signed short f() { return 1;}";
                 statements: vec![Statement::If {
                     condition: Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 15),
+                        location: Location::empty(),
                     },
-                    body: Box::new(Statement::Break(Location::new(1, 18))),
-                    alternative: Some(Box::new(Statement::Continue(Location::new(1, 30)))),
-                    location: Location::new(1, 11),
+                    body: Box::new(Statement::Break(Location::empty())),
+                    alternative: Some(Box::new(Statement::Continue(Location::empty()))),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1433,14 +1586,21 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_switch() {
-        let source = "int f() { switch (1) {case 1: break;} }";
+        let source = "
+            int f() {
+                switch (1) {
+                    case 1: break;
+                }
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Int {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1448,21 +1608,21 @@ signed short f() { return 1;}";
                 statements: vec![Statement::Switch {
                     expression: Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 19),
+                        location: Location::empty(),
                     },
                     branches: vec![(
                         Expression::IntConst {
                             value: 1,
-                            location: Location::new(1, 28),
+                            location: Location::empty(),
                         },
-                        vec![Statement::Break(Location::new(1, 31))],
+                        vec![Statement::Break(Location::empty())],
                     )],
                     default: None,
-                    location: Location::new(1, 11),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1473,14 +1633,22 @@ signed short f() { return 1;}";
 
     #[test]
     fn statement_switch_default() {
-        let source = "int f() { switch (1) {case 1: break; default: continue;} }";
+        let source = "
+            int f() {
+                switch (1) {
+                    case 1: break;
+                    default: continue;
+                }
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Int {
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1488,21 +1656,21 @@ signed short f() { return 1;}";
                 statements: vec![Statement::Switch {
                     expression: Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 19),
+                        location: Location::empty(),
                     },
                     branches: vec![(
                         Expression::IntConst {
                             value: 1,
-                            location: Location::new(1, 28),
+                            location: Location::empty(),
                         },
-                        vec![Statement::Break(Location::new(1, 31))],
+                        vec![Statement::Break(Location::empty())],
                     )],
-                    default: Some(vec![Statement::Continue(Location::new(1, 47))]),
-                    location: Location::new(1, 11),
+                    default: Some(vec![Statement::Continue(Location::empty())]),
+                    location: Location::empty(),
                 }],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1520,7 +1688,8 @@ signed short f() { return 1;}";
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1528,28 +1697,28 @@ signed short f() { return 1;}";
                 statements: vec![
                     Statement::Expr(Expression::Ident {
                         value: "a",
-                        location: Location::new(1, 11),
+                        location: Location::empty(),
                     }),
                     Statement::Expr(Expression::IntConst {
                         value: 1,
-                        location: Location::new(1, 14),
+                        location: Location::empty(),
                     }),
                     Statement::Expr(Expression::FloatConst {
                         value: 1.0,
-                        location: Location::new(1, 17),
+                        location: Location::empty(),
                     }),
                     Statement::Expr(Expression::CharConst {
                         value: "'b'",
-                        location: Location::new(1, 22),
+                        location: Location::empty(),
                     }),
                     Statement::Expr(Expression::StrConst {
                         value: "\"c\"",
-                        location: Location::new(1, 27),
+                        location: Location::empty(),
                     }),
                 ],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1567,7 +1736,8 @@ signed short f() { return 1;}";
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1575,7 +1745,7 @@ signed short f() { return 1;}";
                 statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::IntConst {
                         value: 0,
-                        location: Location::new(1, 11),
+                        location: Location::empty(),
                     }),
                     operator: "=",
                     right: Box::new(Expression::Infix {
@@ -1584,18 +1754,18 @@ signed short f() { return 1;}";
                                 operator: "++",
                                 expression: Box::new(Expression::IntConst {
                                     value: 1,
-                                    location: Location::new(1, 15),
+                                    location: Location::empty(),
                                 }),
-                                location: Location::new(1, 13),
+                                location: Location::empty(),
                             }),
                             operator: "+",
                             right: Box::new(Expression::Prefix {
                                 operator: "--",
                                 expression: Box::new(Expression::IntConst {
                                     value: 2,
-                                    location: Location::new(1, 19),
+                                    location: Location::empty(),
                                 }),
-                                location: Location::new(1, 17),
+                                location: Location::empty(),
                             }),
                         }),
                         operator: "-",
@@ -1606,7 +1776,7 @@ signed short f() { return 1;}";
                                         operator: "++",
                                         expression: Box::new(Expression::IntConst {
                                             value: 3,
-                                            location: Location::new(1, 21),
+                                            location: Location::empty(),
                                         }),
                                     }),
                                     operator: "*",
@@ -1614,7 +1784,7 @@ signed short f() { return 1;}";
                                         operator: "--",
                                         expression: Box::new(Expression::IntConst {
                                             value: 4,
-                                            location: Location::new(1, 25),
+                                            location: Location::empty(),
                                         }),
                                     }),
                                 }),
@@ -1622,26 +1792,26 @@ signed short f() { return 1;}";
                                 right: Box::new(Expression::Infix {
                                     left: Box::new(Expression::IntConst {
                                         value: 5,
-                                        location: Location::new(1, 30),
+                                        location: Location::empty(),
                                     }),
                                     operator: "%",
                                     right: Box::new(Expression::IntConst {
                                         value: 6,
-                                        location: Location::new(1, 32),
+                                        location: Location::empty(),
                                     }),
                                 }),
                             }),
                             operator: "%",
                             right: Box::new(Expression::IntConst {
                                 value: 7,
-                                location: Location::new(1, 35),
+                                location: Location::empty(),
                             }),
                         }),
                     }),
                 })],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1659,7 +1829,8 @@ signed short f() { return 1;}";
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1668,12 +1839,12 @@ signed short f() { return 1;}";
                     left: Box::new(Expression::Infix {
                         left: Box::new(Expression::IntConst {
                             value: 0,
-                            location: Location::new(1, 11),
+                            location: Location::empty(),
                         }),
                         operator: "==",
                         right: Box::new(Expression::IntConst {
                             value: 1,
-                            location: Location::new(1, 14),
+                            location: Location::empty(),
                         }),
                     }),
                     operator: "!=",
@@ -1683,36 +1854,36 @@ signed short f() { return 1;}";
                                 left: Box::new(Expression::Infix {
                                     left: Box::new(Expression::IntConst {
                                         value: 2,
-                                        location: Location::new(1, 17),
+                                        location: Location::empty(),
                                     }),
                                     operator: "<",
                                     right: Box::new(Expression::IntConst {
                                         value: 3,
-                                        location: Location::new(1, 19),
+                                        location: Location::empty(),
                                     }),
                                 }),
                                 operator: ">",
                                 right: Box::new(Expression::IntConst {
                                     value: 4,
-                                    location: Location::new(1, 21),
+                                    location: Location::empty(),
                                 }),
                             }),
                             operator: "<=",
                             right: Box::new(Expression::IntConst {
                                 value: 5,
-                                location: Location::new(1, 24),
+                                location: Location::empty(),
                             }),
                         }),
                         operator: ">=",
                         right: Box::new(Expression::IntConst {
                             value: 6,
-                            location: Location::new(1, 27),
+                            location: Location::empty(),
                         }),
                     }),
                 })],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1730,7 +1901,8 @@ signed short f() { return 1;}";
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1741,9 +1913,9 @@ signed short f() { return 1;}";
                             operator: "!",
                             expression: Box::new(Expression::IntConst {
                                 value: 0,
-                                location: Location::new(1, 12),
+                                location: Location::empty(),
                             }),
-                            location: Location::new(1, 11),
+                            location: Location::empty(),
                         }),
                         operator: "||",
                         right: Box::new(Expression::Infix {
@@ -1751,18 +1923,18 @@ signed short f() { return 1;}";
                                 operator: "+",
                                 expression: Box::new(Expression::IntConst {
                                     value: 1,
-                                    location: Location::new(1, 16),
+                                    location: Location::empty(),
                                 }),
-                                location: Location::new(1, 15),
+                                location: Location::empty(),
                             }),
                             operator: "&&",
                             right: Box::new(Expression::Prefix {
                                 operator: "-",
                                 expression: Box::new(Expression::IntConst {
                                     value: 2,
-                                    location: Location::new(1, 20),
+                                    location: Location::empty(),
                                 }),
-                                location: Location::new(1, 19),
+                                location: Location::empty(),
                             }),
                         }),
                     }),
@@ -1770,39 +1942,39 @@ signed short f() { return 1;}";
                     right: Box::new(Expression::Infix {
                         left: Box::new(Expression::IntConst {
                             value: 3,
-                            location: Location::new(1, 23),
+                            location: Location::empty(),
                         }),
                         operator: "-=",
                         right: Box::new(Expression::Infix {
                             left: Box::new(Expression::IntConst {
                                 value: 4,
-                                location: Location::new(1, 26),
+                                location: Location::empty(),
                             }),
                             operator: "*=",
                             right: Box::new(Expression::Infix {
                                 left: Box::new(Expression::IntConst {
                                     value: 5,
-                                    location: Location::new(1, 29),
+                                    location: Location::empty(),
                                 }),
                                 operator: "/=",
                                 right: Box::new(Expression::Infix {
                                     left: Box::new(Expression::IntConst {
                                         value: 6,
-                                        location: Location::new(1, 32),
+                                        location: Location::empty(),
                                     }),
                                     operator: "%=",
                                     right: Box::new(Expression::IntConst {
                                         value: 7,
-                                        location: Location::new(1, 35),
+                                        location: Location::empty(),
                                     }),
                                 }),
                             }),
                         }),
                     }),
                 })],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1813,23 +1985,28 @@ signed short f() { return 1;}";
 
     #[test]
     fn dummy_type() {
-        let source = "f(a) { a = 1; b = 2;}";
+        let source = "
+            f(a) {
+                a = 1;
+                b = 2;
+            }
+        ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::T {
-                dummy_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(0, 0),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: [(
                 "a",
                 Type::T {
-                    dummy_flag: true,
                     array_flag: false,
                     array_len: None,
-                    location: Location::new(0, 0),
+                    pointer_flag: false,
+                    location: Location::empty(),
                 },
             )]
             .iter()
@@ -1840,34 +2017,34 @@ signed short f() { return 1;}";
                     Statement::Expr(Expression::Infix {
                         left: Box::new(Expression::Ident {
                             value: "a",
-                            location: Location::new(1, 8),
+                            location: Location::empty(),
                         }),
                         operator: "=",
                         right: Box::new(Expression::IntConst {
                             value: 1,
-                            location: Location::new(1, 12),
+                            location: Location::empty(),
                         }),
                     }),
                     Statement::Def {
                         declarators: vec![(
                             Type::T {
-                                dummy_flag: true,
                                 array_flag: false,
                                 array_len: None,
-                                location: Location::new(0, 0),
+                                pointer_flag: false,
+                                location: Location::empty(),
                             },
                             "b",
                             Some(Expression::IntConst {
                                 value: 2,
-                                location: Location::new(1, 19),
+                                location: Location::empty(),
                             }),
                         )],
-                        location: Location::new(1, 15),
+                        location: Location::empty(),
                     },
                 ],
-                location: Location::new(1, 6),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -1885,7 +2062,8 @@ signed short f() { return 1;}";
                 signed_flag: true,
                 array_flag: false,
                 array_len: None,
-                location: Location::new(1, 1),
+                pointer_flag: false,
+                location: Location::empty(),
             },
             name: "f",
             parameters: IndexMap::new(),
@@ -1894,28 +2072,28 @@ signed short f() { return 1;}";
                     left: Box::new(Expression::Index {
                         expression: Box::new(Expression::Ident {
                             value: "a",
-                            location: Location::new(1, 11),
+                            location: Location::empty(),
                         }),
                         index: Box::new(Expression::IntConst {
                             value: 0,
-                            location: Location::new(1, 13),
+                            location: Location::empty(),
                         }),
                     }),
                     operator: "+",
                     right: Box::new(Expression::Call {
                         expression: Box::new(Expression::Ident {
                             value: "b",
-                            location: Location::new(1, 16),
+                            location: Location::empty(),
                         }),
                         arguments: vec![Expression::IntConst {
                             value: 1,
-                            location: Location::new(1, 18),
+                            location: Location::empty(),
                         }],
                     }),
                 })],
-                location: Location::new(1, 9),
+                location: Location::empty(),
             },
-            location: Location::new(1, 1),
+            location: Location::empty(),
         }];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();

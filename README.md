@@ -47,9 +47,9 @@ Agile C is written in pure [Rust](https://www.rust-lang.org/), and is distribute
 That's all. Pretty simple. Following sections provide more in-depth explanations of how Agile C works.
 - [Architecture](#Architecture) shows the module structure of Agile C and the general workflow.
 - [Parsing](#Parsing) describes the general idea about how Agile C parses a program and inserts dummy type parameters.
-- [Type Inference](#Type%20Inference) provides a detailed explanation about how Agile C perform type inference.
+- [Inference](#Inference) provides a detailed explanation about how Agile C perform type inference.
 - [TODO](#TODO) lists features and bugs that I am currently working on.
-- [Grammar Summary](#Grammar%20Summary) lists currently supported C grammer in BNF.
+- [Grammar](#Grammar) lists currently supported C grammer in BNF.
 
 ## Architecture
 
@@ -73,11 +73,11 @@ For functions' return types and parameters, generally the parser knows there sho
 
 For variable definitions, the parser will maintain a environment object for each scope, which is a hash set containing name of variables defined in the current scope. When the parser produces a assignment expression, it will search those environment objects, and if the variable being assigned is not defined yet, the parser will transform this assignment expression into a definition statement with a dummy type specifier `T`.
 
-## Type Inference
+## Inference
 
 Type inference is in essential an automatic detection of the data type of expressions and variables given some context information including literals whose types are trivially known, variables whose types are known, and constraints imposed by language semantics.
 
-To record and utilize known type information, Agile C implements a structure called  `SymbolTable` whose definition is given below.
+To record and utilize these known type information, Agile C implements a structure called  `SymbolTable` whose definition is given below.
 
 ``` rust
 struct SymbolTable<'a> {
@@ -99,8 +99,8 @@ output: ast (a vector of functions with all dummy types resolved)
 for each func in generic_ast do
     store func's return type and parameters into SymbolTable.functions
 for each func in generic_ast do
-    enter a new scope
     set SymbolTable.current_func
+    enter a new scope
     load parameters into the current scope
     resolve func's body statement (more later)
     update func's parameter types in SymbolTable.functions from local parameters
@@ -111,15 +111,31 @@ for each func in generic_ast do
 return generic_ast
 ```
 
-When resolving statements, we are actaully resolving expressions in them, and there are two statements where resolved expression types will be associated with some other type or variables. The first one is the `Return` statement where the type of the expression (`void` if no expression) will be associated with the function's return type. The second one is the `Def` statement where types of initializers will be compared with the leading type declaration and then associated with variables being defined.
+When resolving statements, we are actaully resolving expressions in them, and there are two statements where resolved expression types will be associated with some other type or variables. The first one is the `Return` statement where the type of the expression (`void` if no expression) will be associated with the function's return type. The second one is the `Def` statement where types of initializers will be associated with variables being defined.
 
-Conceptually, we can think this type unification process as trying to assign a value with `type_right` to a variable with `type_left`. What we need to do now is to determine whether this assignment is legal, and if these two types are not fully specified, whether we can make the assignment legal by further specifing their types. The resolver use a set of rules listed below to perform this task, where `T` is the dummy type parameter, `M` stands for some concrete type that we do not care what it really is, and `-` means the same type as its original type. All other type combinations will cause the unification to fail.
+This association process is known as "type unification", and conceptually, we can think type unification as trying to determine whether an assignment from a value with `type_right` to a variable with `type_left` is legal, and if these two types are not fully specified, whether we can make the assignment legal by further specifing their types. The resolver use a 3-step algorithm given below to determine whether a given unification is legal or not (`-` means the same type as its original type). Also notice in current implementation, every type object has an array flag and an pointer flag associated with it, so we can check whether a type (variable) is an array or a pointer.
+
+```
+input: type_left, type_right
+output: (inferred_type_left, inferred_type_right) or error
+
+if type_left == T
+    return (type_right, type_right)
+if type_right == T
+    return (type_left, type_left)
+if type_left == Void and type_right == Void
+    return (type_left, type_right)
+if type_left and type_right are not both arrays or pointers
+    return error
+if the combination of type_left and type_right is in the rule table (below)
+    return the inferred result from the table
+else
+    return error
+```
 
 | `type_left` | `type_right` | Inferred `type_left` | Inferred `type_right` |
 | --- | --- | --- | --- |
-| `T` | `M` | `M` | `M` |
-| `M` | `T` | `M` | `M` |
-| `M` | `M` | `M` | `M` |
+| `char` | `char` | `char` | `char` |
 | `short` | `char` or `short` | `-` | `-` |
 | `unsigned short` | `char` or ` unsigned short` | `-` | `-` |
 | `int` | `char` or `short` or `unsigned short` or `int` | `-` | `-` |
@@ -131,7 +147,7 @@ Conceptually, we can think this type unification process as trying to assign a v
 
 Then we need to resolve expressions to obtain `type_right`. The resolver will first recursively destructure an expression back to five primary expressions: `Ident`, `IntConst`, `FloatConst`, `CharConst`, and `StrConst`.
 
-For `Ident`, the resolver will retrieve its type from `SymbolTable` and if its type is `T`, it will be marked as a `generic_ident`. Each time the resolver successfully performs a type unification, it will update type information for all `generic_ident` involved. For `IntConst`, the resolver will pick the "narrowest" integer type that the literal fits. All interger types we support now are listed below from the narrowest (top) to the widest (bottom). For `FloatConst`, the same process applies and available types are also given below. Then `CharConst` will be assigned type `char` and `StrConst` will be assigned type `T` because currently we do not have pointer types.
+For `Ident`, the resolver will retrieve its type from `SymbolTable` and if its type is `T`, it will be marked as a `generic_ident`. Each time the resolver successfully performs a type unification, it will update type information for all `generic_ident` involved. For `IntConst`, the resolver will pick the "narrowest" integer type that the literal fits. All interger types we support now are listed below from the narrowest (top) to the widest (bottom). For `FloatConst`, the same process applies and available types are also given below. Then `CharConst` will be assigned type `char` and `StrConst` will be assigned type `char` with its pointer flag set.
 
 ```
 Integer Types:
@@ -147,24 +163,25 @@ Floating Type:
     double
 ```
 
-After that these primary expressions will be combined into all other expressions by various operators. It will take too much space to list all specific rules, only five general rules are listed below. Notice "M is compatible with N" here means a type unification using N as its `type_left` and M as its `type_right` will succeed.
+After that, these primary expressions will be combined into all other expressions by various operators. It will take too much space to list all specific rules, so we only list the most fundamental rules below. Notice "M is compatible with N" means a type unification process using N as its `type_left` and M as its `type_right` will succeed.
 
 - Position where a number is required should have a type that is compatible with `double`.
 - Position where a bool is required should have a type that is compatible with `int`.
-- Indexes to arrays are required to be compatible with `long` or `unsigned long`.
-- Aruguments in functions calls are required to be compatible with corresponding parameters in function definitions.
-- All expressions in a array initializer list should be compatible with a single type, which will be the type of the array.
+- Prefix operator `*` will clear the pointer flag of whatever type the following epression has.
+- Prefix operator `&` will set the pointer flag of whatever type the following epression has.
+- Indexes to arrays are required to be compatible with `long` or `unsigned long`, and the type of the whole index expression is the same as the array itself with the array flag cleared.
+- Aruguments in a functions call are required to be compatible with corresponding parameters in the corresponding function definition.
+- All expressions in a array initializer list should be compatible with a single type, which will be the type of the array with its array flag set.
 
 ## TODO
 
-- Parsing of empty statements.
-- Type inference between function arguments and parameters.
-- More powerful type constrains so that we can perform a chain of inference instead of just one-step inference.
-- Parsing and type inference for the pointer type.
+- More powerful type constrains so that we can:
+    - Perform a chain of inference instead of just one-step inference.
+    - Perform inference between function arguments and parameters.
 - Parsing and type inference for the structure type.
 - Cross-file parsing and type inference (`#include` directive).
 
-## Grammar Summary
+## Grammar
 
 Grammar are excerpted from [C18](https://www.iso.org/standard/74528.html) and rewritten in BNF.
 
@@ -212,7 +229,7 @@ Grammar are excerpted from [C18](https://www.iso.org/standard/74528.html) and re
 <argument-list> ::= <constant-expression>
                         | <argument-list> "," <constant-expression>
 <prefix-expression> ::= <suffix-expression>
-                        | ["++" | "--" | "!"] <suffix-expression>
+                        | ["++" | "--" | "!" | "*" | "&"] <suffix-expression>
 <multiplicative-expression> ::= <prefix-expression>
                         | <multiplicative-expression> "*" <prefix-expression>
                         | <multiplicative-expression> "/" <prefix-expression>
