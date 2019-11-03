@@ -1,6 +1,6 @@
 //! A serializer serializing a complete AST to a output string.
 
-use crate::structure::{Array, Expression, Function, Pointer, Statement, Type};
+use crate::structure::{Array, Expression, Function, Pointer, Statement, Type, Location};
 
 pub struct Serializer<'a> {
     ast: Option<Vec<Function<'a>>>,
@@ -99,6 +99,40 @@ impl<'a> Serializer<'a> {
             }
             Type::Float { .. } => self.push_str_space("float"),
             Type::Double { .. } => self.push_str_space("double"),
+            Type::Struct { name, members, .. } => {
+                self.push_str_space("struct");
+                self.push_str_space(&name);
+                if members.is_empty() {
+                    self.push_str_space("{}");    
+                } else {
+                    self.push_str_newline("{");
+                    self.ident_level += 1;
+                    for (member, r#type) in members {
+                        self.push_str(&" ".repeat(self.ident_level * 4));
+                        self.serialize_type(r#type.clone());
+                        let (array_flag, array_len) = r#type.get_array();
+                        let pointer_flag = r#type.get_pointer_flag();
+                        if array_flag {
+                            self.push_str(&member);
+                            self.push_str("[");
+                            if let Some(len) = array_len {
+                                self.push_str(&len.to_string());
+                            }
+                            self.push_str_space("]");
+                        } else if pointer_flag {
+                            self.push_str("*");
+                            self.push_str_space(&member);
+                        } else {
+                            self.push_str_space(&member);
+                        }
+                        self.pop_char();
+                        self.push_str_newline(";")
+                    }
+                    self.ident_level -= 1;
+                    self.push_str(&" ".repeat(self.ident_level * 4));
+                    self.push_str_space("}");
+                }
+            },
         }
     }
 
@@ -123,7 +157,12 @@ impl<'a> Serializer<'a> {
                 right,
             } => {
                 self.serialize_expression(*left);
-                self.push_str_space(operator);
+                if let "." | "->" = operator {
+                    self.pop_char();
+                    self.push_str(operator);
+                } else{
+                    self.push_str_space(operator);
+                }
                 self.serialize_expression(*right);
             }
             Expression::Suffix {
@@ -213,7 +252,7 @@ impl<'a> Serializer<'a> {
                 self.push_str_newline("}");
             }
             Statement::Def { declarators, .. } => {
-                let r#type = declarators.last().unwrap().0;
+                let r#type = declarators.last().unwrap().0.clone();
                 self.serialize_type(r#type);
                 for (r#type, ident, init) in declarators {
                     let (array_flag, array_len) = r#type.get_array();
@@ -412,6 +451,7 @@ double f() {}\n";
             +1 + a++;
             \"1\"[0];
             f(1);
+            a.b + c->d;
         }";
         let expected_transformed_source = "int f(int a) {
     a;
@@ -422,6 +462,7 @@ double f() {}\n";
     +1 + a++;
     \"1\"[0];
     f(1);
+    a.b + c->d;
 }\n";
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -439,6 +480,14 @@ double f() {}\n";
             int c, d = 2;
             int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
             int *h, *i = &a, j = *i;
+            struct A {} a1;
+            struct B {
+                int a;
+            } b1 = { 1 };
+            struct C {
+                int a;
+                float b;
+            } c1 = { 1, 2 };
 
             while (1) {
                 continue;
@@ -474,6 +523,14 @@ double f() {}\n";
     int c, d = 2;
     int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
     int *h, *i = &a, j = *i;
+    struct A {} a1;
+    struct B {
+        int a;
+    } b1 = { 1 };
+    struct C {
+        int a;
+        float b;
+    } c1 = { 1, 2 };
     while (1) {
         continue;
     }

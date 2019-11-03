@@ -141,6 +141,8 @@ impl<'a> Parser<'a> {
             Some(Token::BiMinus(_)) => 16,
             Some(Token::LBracket(_)) => 16,
             Some(Token::LParen(_)) => 16,
+            Some(Token::Dot(_)) => 16,
+            Some(Token::Arrow(_)) => 16,
             _ => 0,
         }
     }
@@ -366,6 +368,7 @@ impl<'a> Parser<'a> {
                     Err(())
                 }
             },
+            Some(Token::Struct(location)) => self.parse_type_struct(location),
             Some(tk) => {
                 self.tokens.push(tk);
                 Ok(Type::T {
@@ -380,6 +383,52 @@ impl<'a> Parser<'a> {
                 Err(())
             }
         }
+    }
+
+    fn parse_type_struct(&mut self, location: Location) -> Result<Type, ()> {
+        let name = match self.parse_expression(0)? {
+            Expression::Ident { value, .. } => value,
+            _ => return Err(())
+        };
+        self.assert_token("LBrace")?;
+        let mut members = IndexMap::new();
+        loop {
+            if let Some(Token::RBrace(_)) = self.tokens.last() {
+                self.tokens.pop();
+                break
+            }
+            let (member, r#type) = match self.parse_statement()? {
+                Statement::Def {declarators, .. } => {
+                    if declarators.len() == 1 {
+                        (declarators[0].1, declarators[0].0.clone())
+                    } else {
+                        self.push_error("Expect fields.", None);
+                        return Err(());
+                    }
+                }
+                _ => {
+                    self.push_error("Expect fields.", None);
+                    return Err(());
+                }
+            };
+            members.insert(member.to_string(), r#type);
+            match self.tokens.pop() {
+                Some(Token::RBrace(_)) => break,
+                Some(tk) => self.tokens.push(tk),
+                None => {
+                    self.push_error("Unexpected EOF.", None);
+                    return Err(());
+                }
+            }
+        }
+        Ok(Type::Struct {
+            name: name.to_string(),
+            members,
+            array_flag: false,
+            array_len: None,
+            pointer_flag: false,
+            location,
+        })
     }
 
     fn parse_statement(&mut self) -> Result<Statement<'a>, ()> {
@@ -406,7 +455,8 @@ impl<'a> Parser<'a> {
             | Some(r#type @ Token::Float(_))
             | Some(r#type @ Token::Double(_))
             | Some(r#type @ Token::Signed(_))
-            | Some(r#type @ Token::Unsigned(_)) => {
+            | Some(r#type @ Token::Unsigned(_)) 
+            | Some(r#type @ Token::Struct(_))=> {
                 self.tokens.push(r#type);
                 self.parse_statement_def()
             }
@@ -638,7 +688,10 @@ impl<'a> Parser<'a> {
                         // Parse a plain variable or a pointer.
                         Some(Token::Equal(_)) => {
                             self.tokens.pop();
-                            let value = self.parse_expression(0)?;
+                            let value = match self.tokens.last() {
+                                Some(Token::LBrace(_)) => self.parse_expression_init_list()?,
+                                _ => self.parse_expression(0)?,
+                            };
                             declarators.push((r#type, literal, Some(value)));
                         }
                         // Parse an array.
@@ -688,6 +741,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
+                Some(Token::Semicolon(_)) => break,
                 Some(tk) => {
                     self.push_error("Expect a identifier.", Some(&tk));
                     self.tokens.push(tk);
@@ -995,6 +1049,16 @@ impl<'a> Parser<'a> {
                     arguments,
                 })
             }
+            Some(Token::Dot(_)) => Ok(Expression::Infix {
+                left: Box::new(left),
+                operator: ".",
+                right: Box::new(self.parse_expression(precedence)?),
+            }),
+            Some(Token::Arrow(_)) => Ok(Expression::Infix {
+                left: Box::new(left),
+                operator: "->",
+                right: Box::new(self.parse_expression(precedence)?),
+            }),
             Some(tk) => {
                 self.push_error("Expect an infix operator.", Some(&tk));
                 self.tokens.push(tk);
@@ -1383,6 +1447,139 @@ mod tests {
     }
 
     #[test]
+    fn statement_def_struct() {
+        let source = "
+            signed int f() {
+                struct A {} a1;
+                struct B {
+                    int a;
+                } b1 = { 1 };
+                struct C {
+                    int a;
+                    float b;
+                } c1 = { 1, 2 };
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![Function {
+            r#type: Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                pointer_flag: false,
+                location: Location::empty(),
+            },
+            name: "f",
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Statement::Def {
+                    declarators: vec![
+                        (
+                            Type::Struct {
+                                name: "A".to_string(),
+                                members: IndexMap::new(),
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                location: Location::empty(),
+                            },
+                            "a1",
+                            None,
+                        )
+                    ],
+                    location: Location::empty(),
+                },Statement::Def {
+                    declarators: vec![
+                        (
+                            Type::Struct {
+                                name: "B".to_string(),
+                                members: [(
+                                    "a".to_string(),
+                                    Type::Int {
+                                        signed_flag:true,
+                                        array_flag: false,
+                                        array_len: None,
+                                        pointer_flag: false,
+                                        location: Location::empty(),
+                                    },
+                                )]
+                                .iter()
+                                .cloned()
+                                .collect(),
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                location: Location::empty(),
+                            },
+                            "b1",
+                            Some(Expression::InitList {
+                                expressions: vec![Expression::IntConst {
+                                    value: 1,
+                                    location: Location::empty(),
+                                }],
+                                location: Location::empty(),
+                            }),
+                        )
+                    ],
+                    location: Location::empty(),
+                },Statement::Def {
+                    declarators: vec![
+                        (
+                            Type::Struct {
+                                name: "C".to_string(),
+                                members: [(
+                                    "a".to_string(),
+                                    Type::Int {
+                                        signed_flag:true,
+                                        array_flag: false,
+                                        array_len: None,
+                                        pointer_flag: false,
+                                        location: Location::empty(),
+                                    },
+                                ),(
+                                    "b".to_string(),
+                                    Type::Float {
+                                        array_flag: false,
+                                        array_len: None,
+                                        pointer_flag: false,
+                                        location: Location::empty(),
+                                    },
+                                )]
+                                .iter()
+                                .cloned()
+                                .collect(),
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                location: Location::empty(),
+                            },
+                            "c1",
+                            Some(Expression::InitList {
+                                expressions: vec![Expression::IntConst {
+                                    value: 1,
+                                    location: Location::empty(),
+                                },Expression::IntConst {
+                                    value: 2,
+                                    location: Location::empty(),
+                                }],
+                                location: Location::empty(),
+                            }),
+                        )
+                    ],
+                    location: Location::empty(),
+                }],
+                location: Location::empty(),
+            },
+            location: Location::empty(),
+        }];
+        let errors = Vec::new();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let (generic_ast, errors) = Parser::new(tokens, errors).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
     fn statement_while() {
         let source = "
             signed long f() {
@@ -1729,7 +1926,7 @@ mod tests {
 
     #[test]
     fn expression_arithmetic() {
-        let source = "int f() { 0=++1+--2-3++*4--/(5%6)%7; }";
+        let source = "int f() { 0=++a.b+--c->d-3++*4--/(5%6)%7; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![Function {
             r#type: Type::Int {
@@ -1752,18 +1949,32 @@ mod tests {
                         left: Box::new(Expression::Infix {
                             left: Box::new(Expression::Prefix {
                                 operator: "++",
-                                expression: Box::new(Expression::IntConst {
-                                    value: 1,
-                                    location: Location::empty(),
+                                expression: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::Ident {
+                                        value: "a",
+                                        location: Location::empty(),
+                                    }),
+                                    operator: ".",
+                                    right: Box::new(Expression::Ident {
+                                        value: "b",
+                                        location: Location::empty(),
+                                    }),
                                 }),
                                 location: Location::empty(),
                             }),
                             operator: "+",
                             right: Box::new(Expression::Prefix {
                                 operator: "--",
-                                expression: Box::new(Expression::IntConst {
-                                    value: 2,
-                                    location: Location::empty(),
+                                expression: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::Ident {
+                                        value: "c",
+                                        location: Location::empty(),
+                                    }),
+                                    operator: "->",
+                                    right: Box::new(Expression::Ident {
+                                        value: "d",
+                                        location: Location::empty(),
+                                    }),
                                 }),
                                 location: Location::empty(),
                             }),

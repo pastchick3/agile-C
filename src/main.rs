@@ -10,11 +10,11 @@ use agile_c::Transpiler;
 #[structopt(name = "Agile C")]
 struct Opt {
     /// The path to the input file.
-    #[structopt(short, long)]
+    #[structopt(short, long, parse(from_os_str))]
     input: PathBuf,
 
     /// The path to the output file.
-    #[structopt(short, long)]
+    #[structopt(short, long, parse(from_os_str))]
     output: PathBuf,
 }
 

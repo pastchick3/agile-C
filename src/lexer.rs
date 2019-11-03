@@ -153,6 +153,10 @@ impl<'a> Lexer<'a> {
                         self.forward();
                         Ok(MinusEq(self.get_location()))
                     }
+                    Some(">") => {
+                        self.forward();
+                        Ok(Arrow(self.get_location()))
+                    }
                     _ => Ok(Minus(self.get_location())),
                 }
             }
@@ -278,6 +282,10 @@ impl<'a> Lexer<'a> {
             Some(",") => {
                 self.forward();
                 Ok(Comma(self.get_location()))
+            }
+            Some(".") => {
+                self.forward();
+                Ok(Dot(self.get_location()))
             }
             Some(":") => {
                 self.forward();
@@ -423,6 +431,7 @@ impl<'a> Lexer<'a> {
             "continue" => Ok(Continue(self.get_location())),
             "break" => Ok(Break(self.get_location())),
             "return" => Ok(Return(self.get_location())),
+            "struct" => Ok(Struct(self.get_location())),
 
             _ => Ok(Ident {
                 literal,
@@ -627,7 +636,7 @@ mod tests {
 
     #[test]
     fn keywords() {
-        let source = "switch case default if else do while for continue break return";
+        let source = "switch case default if else do while for continue break return struct";
         let expected_errors = vec![];
         let expected_tokens = vec![
             Switch(Location::empty()),
@@ -641,6 +650,7 @@ mod tests {
             Continue(Location::empty()),
             Break(Location::empty()),
             Return(Location::empty()),
+            Struct(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -650,12 +660,14 @@ mod tests {
 
     #[test]
     fn punctuation() {
-        let source = ", : \n ;";
+        let source = ", : \n ; . ->";
         let expected_errors = vec![];
         let expected_tokens = vec![
             Comma(Location::empty()),
             Colon(Location::empty()),
             Semicolon(Location::empty()),
+            Dot(Location::empty()),
+            Arrow(Location::empty()),
         ];
         let errors = Vec::new();
         let (tokens, errors) = Lexer::new(&source, errors).run();
@@ -665,14 +677,10 @@ mod tests {
 
     #[test]
     fn error() {
-        let source = "1 | .1 1. 1.1.1 \'ab\' \'";
+        let source = "1 | 1. 1.1.1 \'ab\' \'";
         let expected_errors = vec![
             Error::Lexing {
                 message: "Invalid token `|`.".to_string(),
-                location: Location::empty(),
-            },
-            Error::Lexing {
-                message: "Invalid number literal `.1`.".to_string(),
                 location: Location::empty(),
             },
             Error::Lexing {

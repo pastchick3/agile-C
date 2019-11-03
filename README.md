@@ -179,7 +179,17 @@ After that, these primary expressions will be combined into all other expression
     - Perform a chain of inference instead of just one-step inference.
     - Perform inference between function arguments and parameters.
 - Parsing and type inference for the structure type.
+- Better syntax error recovery:
+    - Panic mode (safe symbols)
+    - Phase level recovery
+    - Context-specific look-ahead
+    - Error productions
+-  Implicit parametric polymorphism? P329
 - Cross-file parsing and type inference (`#include` directive).
+- Backend, GC.
+- change all push_err to use location directly
+- refactor all tests to finer granularity
+- seperate def and dec of struct.
 
 ## Grammar
 

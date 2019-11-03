@@ -189,8 +189,11 @@ pub enum Token<'a> {
     Continue(Location),
     Break(Location),
     Return(Location),
+    Struct(Location),
 
     Ampersand(Location),
+    Dot(Location),
+    Arrow(Location),
     Comma(Location),
     Colon(Location),
     Semicolon(Location),
@@ -215,14 +218,14 @@ impl<'a> Locate for Token<'a> {
             | AsteriskEq(loc) | SlashEq(loc) | PercentEq(loc) | LParen(loc) | RParen(loc)
             | LBracket(loc) | RBracket(loc) | LBrace(loc) | RBrace(loc) | Switch(loc)
             | Case(loc) | Default(loc) | If(loc) | Else(loc) | Do(loc) | While(loc) | For(loc)
-            | Continue(loc) | Break(loc) | Return(loc) | Ampersand(loc) | Comma(loc)
-            | Colon(loc) | Semicolon(loc) => *loc,
+            | Continue(loc) | Break(loc) | Return(loc) | Struct(loc) | Ampersand(loc) | Dot(loc) | Arrow(loc)
+            | Comma(loc) | Colon(loc) | Semicolon(loc) => *loc,
         }
     }
 }
 
 /// AST nodes for type declarations.
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     T {
         array_flag: bool,
@@ -275,6 +278,14 @@ pub enum Type {
         pointer_flag: bool,
         location: Location,
     },
+    Struct {
+        name: String,
+        members: IndexMap<String, Type>,
+        array_flag: bool,
+        array_len: Option<usize>,
+        pointer_flag: bool,
+        location: Location,
+    }
 }
 
 impl Array for Type {
@@ -368,6 +379,20 @@ impl Array for Type {
                 pointer_flag: *pointer_flag,
                 location: *location,
             },
+            Struct {
+                name,
+                members,
+                pointer_flag,
+                location,
+                ..
+            } => Struct {
+                name: name.to_string(),
+                members: members.clone(),
+                array_flag,
+                array_len,
+                pointer_flag: *pointer_flag,
+                location: *location,
+            },
         }
     }
 
@@ -415,6 +440,11 @@ impl Array for Type {
                 array_len,
                 ..
             } => (*array_flag, *array_len),
+            Struct {
+                array_flag,
+                array_len,
+                ..
+            } => (*array_flag, *array_len),
         }
     }
 }
@@ -423,7 +453,7 @@ impl Pointer for Type {
     fn set_pointer_flag(&self, pointer_flag: bool) -> Type {
         use Type::*;
 
-        match *self {
+        match self.clone() {
             T {
                 array_flag,
                 array_len,
@@ -518,6 +548,21 @@ impl Pointer for Type {
                 pointer_flag,
                 location,
             },
+            Struct {
+                name,
+                members,
+                array_flag,
+                array_len,
+                location,
+                ..
+            } => Struct {
+                name,
+                members,
+                array_flag,
+                array_len,
+                pointer_flag,
+                location,
+            },
         }
     }
 
@@ -533,6 +578,7 @@ impl Pointer for Type {
             Long { pointer_flag, .. } => *pointer_flag,
             Float { pointer_flag, .. } => *pointer_flag,
             Double { pointer_flag, .. } => *pointer_flag,
+            Struct { pointer_flag, .. } => *pointer_flag,
         }
     }
 }
@@ -549,7 +595,8 @@ impl<'a> Locate for Type {
             | Int { location, .. }
             | Long { location, .. }
             | Float { location, .. }
-            | Double { location, .. } => *location,
+            | Double { location, .. }
+            | Struct { location, .. } => *location,
         }
     }
 }
@@ -567,6 +614,7 @@ impl fmt::Display for Type {
             Long { .. } => write!(f, "long"),
             Float { .. } => write!(f, "float"),
             Double { .. } => write!(f, "double"),
+            Struct { name, .. } => write!(f, "struct {}", name),
         }
     }
 }
