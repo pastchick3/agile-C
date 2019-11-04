@@ -48,14 +48,27 @@ pub trait Pointer {
 /// Notice the serializer should never produce an error.
 #[derive(Debug, PartialEq)]
 pub enum Error {
+    Preprocessing {
+        message: String,
+        location: Location,
+    },
     /// Errors that occurs during lexing.
-    Lexing { message: String, location: Location },
+    Lexing {
+        message: String,
+        location: Location,
+    },
 
     /// Errors that occurs during parsing.
-    Parsing { message: String, location: Location },
+    Parsing {
+        message: String,
+        location: Location,
+    },
 
     /// Errors that occurs during type inference.
-    Resolving { message: String, location: Location },
+    Resolving {
+        message: String,
+        location: Location,
+    },
 }
 
 impl fmt::Display for Error {
@@ -63,6 +76,13 @@ impl fmt::Display for Error {
         use Error::*;
 
         match self {
+            Preprocessing { message, location } => write!(
+                f,
+                "{} ({}): {}",
+                "Preprocessing Error".red(),
+                location,
+                message
+            ),
             Lexing { message, location } => {
                 write!(f, "{} ({}): {}", "Lexing Error".red(), location, message)
             }
@@ -218,8 +238,8 @@ impl<'a> Locate for Token<'a> {
             | AsteriskEq(loc) | SlashEq(loc) | PercentEq(loc) | LParen(loc) | RParen(loc)
             | LBracket(loc) | RBracket(loc) | LBrace(loc) | RBrace(loc) | Switch(loc)
             | Case(loc) | Default(loc) | If(loc) | Else(loc) | Do(loc) | While(loc) | For(loc)
-            | Continue(loc) | Break(loc) | Return(loc) | Struct(loc) | Ampersand(loc) | Dot(loc) | Arrow(loc)
-            | Comma(loc) | Colon(loc) | Semicolon(loc) => *loc,
+            | Continue(loc) | Break(loc) | Return(loc) | Struct(loc) | Ampersand(loc)
+            | Dot(loc) | Arrow(loc) | Comma(loc) | Colon(loc) | Semicolon(loc) => *loc,
         }
     }
 }
@@ -285,7 +305,7 @@ pub enum Type {
         array_len: Option<usize>,
         pointer_flag: bool,
         location: Location,
-    }
+    },
 }
 
 impl Array for Type {

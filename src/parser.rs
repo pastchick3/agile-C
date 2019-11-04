@@ -388,17 +388,17 @@ impl<'a> Parser<'a> {
     fn parse_type_struct(&mut self, location: Location) -> Result<Type, ()> {
         let name = match self.parse_expression(0)? {
             Expression::Ident { value, .. } => value,
-            _ => return Err(())
+            _ => return Err(()),
         };
         self.assert_token("LBrace")?;
         let mut members = IndexMap::new();
         loop {
             if let Some(Token::RBrace(_)) = self.tokens.last() {
                 self.tokens.pop();
-                break
+                break;
             }
             let (member, r#type) = match self.parse_statement()? {
-                Statement::Def {declarators, .. } => {
+                Statement::Def { declarators, .. } => {
                     if declarators.len() == 1 {
                         (declarators[0].1, declarators[0].0.clone())
                     } else {
@@ -455,8 +455,8 @@ impl<'a> Parser<'a> {
             | Some(r#type @ Token::Float(_))
             | Some(r#type @ Token::Double(_))
             | Some(r#type @ Token::Signed(_))
-            | Some(r#type @ Token::Unsigned(_)) 
-            | Some(r#type @ Token::Struct(_))=> {
+            | Some(r#type @ Token::Unsigned(_))
+            | Some(r#type @ Token::Struct(_)) => {
                 self.tokens.push(r#type);
                 self.parse_statement_def()
             }
@@ -1472,9 +1472,9 @@ mod tests {
             name: "f",
             parameters: IndexMap::new(),
             body: Statement::Block {
-                statements: vec![Statement::Def {
-                    declarators: vec![
-                        (
+                statements: vec![
+                    Statement::Def {
+                        declarators: vec![(
                             Type::Struct {
                                 name: "A".to_string(),
                                 members: IndexMap::new(),
@@ -1485,18 +1485,17 @@ mod tests {
                             },
                             "a1",
                             None,
-                        )
-                    ],
-                    location: Location::empty(),
-                },Statement::Def {
-                    declarators: vec![
-                        (
+                        )],
+                        location: Location::empty(),
+                    },
+                    Statement::Def {
+                        declarators: vec![(
                             Type::Struct {
                                 name: "B".to_string(),
                                 members: [(
                                     "a".to_string(),
                                     Type::Int {
-                                        signed_flag:true,
+                                        signed_flag: true,
                                         array_flag: false,
                                         array_len: None,
                                         pointer_flag: false,
@@ -1519,32 +1518,34 @@ mod tests {
                                 }],
                                 location: Location::empty(),
                             }),
-                        )
-                    ],
-                    location: Location::empty(),
-                },Statement::Def {
-                    declarators: vec![
-                        (
+                        )],
+                        location: Location::empty(),
+                    },
+                    Statement::Def {
+                        declarators: vec![(
                             Type::Struct {
                                 name: "C".to_string(),
-                                members: [(
-                                    "a".to_string(),
-                                    Type::Int {
-                                        signed_flag:true,
-                                        array_flag: false,
-                                        array_len: None,
-                                        pointer_flag: false,
-                                        location: Location::empty(),
-                                    },
-                                ),(
-                                    "b".to_string(),
-                                    Type::Float {
-                                        array_flag: false,
-                                        array_len: None,
-                                        pointer_flag: false,
-                                        location: Location::empty(),
-                                    },
-                                )]
+                                members: [
+                                    (
+                                        "a".to_string(),
+                                        Type::Int {
+                                            signed_flag: true,
+                                            array_flag: false,
+                                            array_len: None,
+                                            pointer_flag: false,
+                                            location: Location::empty(),
+                                        },
+                                    ),
+                                    (
+                                        "b".to_string(),
+                                        Type::Float {
+                                            array_flag: false,
+                                            array_len: None,
+                                            pointer_flag: false,
+                                            location: Location::empty(),
+                                        },
+                                    ),
+                                ]
                                 .iter()
                                 .cloned()
                                 .collect(),
@@ -1555,19 +1556,22 @@ mod tests {
                             },
                             "c1",
                             Some(Expression::InitList {
-                                expressions: vec![Expression::IntConst {
-                                    value: 1,
-                                    location: Location::empty(),
-                                },Expression::IntConst {
-                                    value: 2,
-                                    location: Location::empty(),
-                                }],
+                                expressions: vec![
+                                    Expression::IntConst {
+                                        value: 1,
+                                        location: Location::empty(),
+                                    },
+                                    Expression::IntConst {
+                                        value: 2,
+                                        location: Location::empty(),
+                                    },
+                                ],
                                 location: Location::empty(),
                             }),
-                        )
-                    ],
-                    location: Location::empty(),
-                }],
+                        )],
+                        location: Location::empty(),
+                    },
+                ],
                 location: Location::empty(),
             },
             location: Location::empty(),

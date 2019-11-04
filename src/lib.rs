@@ -2,12 +2,14 @@
 
 mod lexer;
 mod parser;
+mod preprocessor;
 mod resolver;
 mod serializer;
 mod structure;
 
 use lexer::Lexer;
 use parser::Parser;
+use preprocessor::Preprocessor;
 use resolver::Resolver;
 use serializer::Serializer;
 
@@ -63,7 +65,8 @@ impl Transpiler {
     /// This function will return an error string if transpilation fails.
     pub fn run(&self) -> Result<String, String> {
         let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&self.source, errors).run();
+        let (source, errors) = Preprocessor::new(&self.source, errors).run();
+        let (tokens, errors) = Lexer::new(&source, errors).run();
         let (generic_ast, errors) = Parser::new(tokens, errors).run();
         let (ast, errors) = Resolver::new(generic_ast, errors).run();
         let transformed_source = Serializer::new(ast).run();
