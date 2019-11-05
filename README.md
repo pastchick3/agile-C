@@ -178,17 +178,19 @@ After that, these primary expressions will be combined into all other expression
 - More powerful type constrains so that we can:
     - Perform a chain of inference instead of just one-step inference.
     - Perform inference between function arguments and parameters.
+- ML style type inference - Implicit parametric polymorphism - P329 
+- Backend, GC.
+- seperate of struct def and var def.
+- arthmetic paren
+- def in for
 - Better syntax error recovery:
     - Panic mode (safe symbols)
     - Phase level recovery
     - Context-specific look-ahead
     - Error productions
--  Implicit parametric polymorphism? P329
 - location to file
-- Backend, GC.
 - change all push_err to use location directly
 - refactor all tests to finer granularity
-- seperate def and dec of struct.
 
 ## Grammar
 

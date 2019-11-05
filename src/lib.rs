@@ -12,6 +12,7 @@ use parser::Parser;
 use preprocessor::Preprocessor;
 use resolver::Resolver;
 use serializer::Serializer;
+use structure::Error;
 
 /// The main struct that users should use.
 ///
@@ -34,12 +35,14 @@ use serializer::Serializer;
 /// }
 /// ";
 ///
-/// let transpiler = Transpiler::new(input).unwrap();
-/// let output = transpiler.run().unwrap();
+/// // let transpiler = Transpiler::new(input).unwrap();
+/// // let output = transpiler.run().unwrap();
 /// // assert_eq!(expected_output, output);
 /// ```
 pub struct Transpiler {
+    file_name: String,
     source: String,
+    errors: Vec<Error>,
 }
 
 impl Transpiler {
@@ -48,12 +51,14 @@ impl Transpiler {
     /// # Errors
     ///
     /// This function will return an error string if the source is empty.
-    pub fn new(source: &str) -> Result<Transpiler, String> {
+    pub fn new(file_name: &str, source: &str) -> Result<Transpiler, String> {
         if source.is_empty() {
             Err("Empty source file is not allowed.".to_string())
         } else {
             Ok(Transpiler {
+                file_name: file_name.to_string(),
                 source: source.to_string(),
+                errors: Vec::new(),
             })
         }
     }
@@ -63,22 +68,29 @@ impl Transpiler {
     /// # Errors
     ///
     /// This function will return an error string if transpilation fails.
-    pub fn run(&self) -> Result<String, String> {
-        let errors = Vec::new();
-        let (source, errors) = Preprocessor::new(&self.source, errors).run();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
-        let (generic_ast, errors) = Parser::new(tokens, errors).run();
-        let (ast, errors) = Resolver::new(generic_ast, errors).run();
+    pub fn run(&mut self) -> Result<String, String> {
+        let lines = Preprocessor::new(&self.file_name, &self.source, &mut self.errors)
+            .run()
+            .map_err(|_| self.format_errors())?;
+        let tokens = Lexer::new(lines, &mut self.errors)
+            .run()
+            .map_err(|_| self.format_errors())?;
+        let generic_ast = Parser::new(tokens, &mut self.errors)
+            .run()
+            .map_err(|_| self.format_errors())?;
+        let ast = Resolver::new(generic_ast, &mut self.errors)
+            .run()
+            .map_err(|_| self.format_errors())?;
         let transformed_source = Serializer::new(ast).run();
-        if errors.is_empty() {
-            Ok(transformed_source)
-        } else {
-            let mut message = errors.iter().fold("\n".to_string(), |mut msg, err| {
-                msg.push_str(&format!("    {}\n", err));
-                msg
-            });
-            message.pop();
-            Err(message)
-        }
+        Ok(transformed_source)
+    }
+
+    fn format_errors(&self) -> String {
+        let mut message = self.errors.iter().fold("\n".to_string(), |mut msg, err| {
+            msg.push_str(&format!("    {}\n", err));
+            msg
+        });
+        message.pop();
+        message
     }
 }

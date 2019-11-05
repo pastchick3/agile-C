@@ -1,7 +1,5 @@
 //! A lexer producing a vector of tokens.
 
-use regex::Regex;
-
 use crate::structure::{Error, Location, Token};
 use Token::*;
 
@@ -11,37 +9,33 @@ use Token::*;
 /// and then scans the source (`line_index` and `char_index`). When a token is produced,
 /// the lexer will slice the source from the start position to the current position.
 pub struct Lexer<'a> {
-    lines: Vec<&'a str>,
+    lines: Vec<(String, usize, String)>,
     start_line_index: usize,
     line_index: usize,
     start_char_index: usize,
     char_index: usize,
     eof: bool,
-    errors: Option<Vec<Error>>,
-    tokens: Option<Vec<Token<'a>>>,
-    raw_num_regex: Regex,
-    word_regex: Regex,
+    tokens: Option<Vec<Token>>,
+    errors: &'a mut Vec<Error>,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(source: &'a str, errors: Vec<Error>) -> Lexer {
+    pub fn new(lines: Vec<(String, usize, String)>, errors: &'a mut Vec<Error>) -> Lexer<'a> {
         Lexer {
-            lines: source.lines().collect(),
+            lines,
             start_line_index: 0,
             line_index: 0,
             start_char_index: 0,
             char_index: 0,
             eof: false,
-            errors: Some(errors),
             tokens: Some(Vec::new()),
-            raw_num_regex: Regex::new(r"\d|\.").unwrap(),
-            word_regex: Regex::new(r"[[:word:]]").unwrap(),
+            errors,
         }
     }
 
-    pub fn run(&mut self) -> (Vec<Token<'a>>, Vec<Error>) {
+    pub fn run(&mut self) -> Result<Vec<Token>, ()> {
         // Skip initial empty lines.
-        while self.lines[self.line_index].is_empty() {
+        while self.lines[self.line_index].2.is_empty() {
             self.line_index += 1;
         }
         loop {
@@ -53,12 +47,16 @@ impl<'a> Lexer<'a> {
                 self.tokens.as_mut().unwrap().push(tk);
             }
         }
-        (self.tokens.take().unwrap(), self.errors.take().unwrap())
+        if self.errors.is_empty() {
+            Ok(self.tokens.take().unwrap())
+        } else {
+            Err(())
+        }
     }
 
     fn skip_whitespaces(&mut self) {
         while let Some(ch) = self.get_cur_ch() {
-            if ch.trim_start().is_empty() {
+            if ch.is_whitespace() {
                 self.forward();
             } else {
                 break;
@@ -67,32 +65,39 @@ impl<'a> Lexer<'a> {
     }
 
     /// Notice this function will return `None` only when EOF.
-    fn get_cur_ch(&self) -> Option<&'a str> {
+    fn get_cur_ch(&self) -> Option<char> {
         if self.eof {
             None
         } else {
-            let line = self.lines[self.line_index];
-            Some(&line[self.char_index..=self.char_index])
+            let line = &self.lines[self.line_index].2;
+            let ch = line[self.char_index..=self.char_index]
+                .chars()
+                .next()
+                .unwrap();
+            Some(ch)
         }
     }
 
-    fn get_slice(&self) -> &'a str {
-        let line = self.lines[self.start_line_index];
+    fn get_literal(&self) -> String {
+        let line = &self.lines[self.start_line_index].2;
         if self.char_index == 0 {
-            &line[self.start_char_index..]
+            line[self.start_char_index..].to_string()
         } else {
-            &line[self.start_char_index..self.char_index]
+            line[self.start_char_index..self.char_index].to_string()
         }
     }
 
     fn get_location(&self) -> Location {
-        Location::new(self.start_line_index + 1, self.start_char_index + 1)
+        let file_name = &self.lines[self.start_line_index].0;
+        let line_index = self.lines[self.start_line_index].1;
+        let char_index = self.start_char_index;
+        Location::new(file_name, line_index, char_index)
     }
 
     /// This function will automatically go to the next line to make
     /// sure `get_cur_ch()` returns `None` only when EOF.
     fn forward(&mut self) {
-        let line = self.lines[self.line_index];
+        let line = &self.lines[self.line_index].2;
         // Not at the end a line.
         if self.char_index + 1 < line.len() {
             self.char_index += 1;
@@ -101,7 +106,7 @@ impl<'a> Lexer<'a> {
             self.line_index += 1;
             self.char_index = 0;
             // Skip empty lines.
-            while self.lines[self.line_index].is_empty() {
+            while self.lines[self.line_index].2.is_empty() {
                 if self.line_index + 1 < self.lines.len() {
                     self.line_index += 1;
                 } else {
@@ -118,72 +123,72 @@ impl<'a> Lexer<'a> {
 
     fn push_error(&mut self, message: &str) {
         let location = self.get_location();
-        self.errors.as_mut().unwrap().push(Error::Lexing {
+        self.errors.push(Error::Lexing {
             message: message.to_string(),
             location,
         });
     }
 
-    fn read_token(&mut self) -> Result<Token<'a>, ()> {
+    fn read_token(&mut self) -> Result<Token, ()> {
         self.start_line_index = self.line_index;
         self.start_char_index = self.char_index;
         match self.get_cur_ch() {
-            Some("+") => {
+            Some('+') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("+") => {
+                    Some('+') => {
                         self.forward();
                         Ok(BiPlus(self.get_location()))
                     }
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(PlusEq(self.get_location()))
                     }
                     _ => Ok(Plus(self.get_location())),
                 }
             }
-            Some("-") => {
+            Some('-') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("-") => {
+                    Some('-') => {
                         self.forward();
                         Ok(BiMinus(self.get_location()))
                     }
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(MinusEq(self.get_location()))
                     }
-                    Some(">") => {
+                    Some('>') => {
                         self.forward();
                         Ok(Arrow(self.get_location()))
                     }
                     _ => Ok(Minus(self.get_location())),
                 }
             }
-            Some("*") => {
+            Some('*') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(AsteriskEq(self.get_location()))
                     }
                     _ => Ok(Asterisk(self.get_location())),
                 }
             }
-            Some("/") => {
+            Some('/') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(SlashEq(self.get_location()))
                     }
                     _ => Ok(Slash(self.get_location())),
                 }
             }
-            Some("%") => {
+            Some('%') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(PercentEq(self.get_location()))
                     }
@@ -191,50 +196,50 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            Some("<") => {
+            Some('<') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(SmallEq(self.get_location()))
                     }
                     _ => Ok(Small(self.get_location())),
                 }
             }
-            Some(">") => {
+            Some('>') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(LargeEq(self.get_location()))
                     }
                     _ => Ok(Large(self.get_location())),
                 }
             }
-            Some("=") => {
+            Some('=') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(EqTo(self.get_location()))
                     }
                     _ => Ok(Equal(self.get_location())),
                 }
             }
-            Some("&") => {
+            Some('&') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("&") => {
+                    Some('&') => {
                         self.forward();
                         Ok(And(self.get_location()))
                     }
                     _ => Ok(Ampersand(self.get_location())),
                 }
             }
-            Some("|") => {
+            Some('|') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("|") => {
+                    Some('|') => {
                         self.forward();
                         Ok(Or(self.get_location()))
                     }
@@ -244,77 +249,77 @@ impl<'a> Lexer<'a> {
                     }
                 }
             }
-            Some("!") => {
+            Some('!') => {
                 self.forward();
                 match self.get_cur_ch() {
-                    Some("=") => {
+                    Some('=') => {
                         self.forward();
                         Ok(NotEqTo(self.get_location()))
                     }
                     _ => Ok(Not(self.get_location())),
                 }
             }
-            Some("(") => {
+            Some('(') => {
                 self.forward();
                 Ok(LParen(self.get_location()))
             }
-            Some(")") => {
+            Some(')') => {
                 self.forward();
                 Ok(RParen(self.get_location()))
             }
-            Some("[") => {
+            Some('[') => {
                 self.forward();
                 Ok(LBracket(self.get_location()))
             }
-            Some("]") => {
+            Some(']') => {
                 self.forward();
                 Ok(RBracket(self.get_location()))
             }
-            Some("{") => {
+            Some('{') => {
                 self.forward();
                 Ok(LBrace(self.get_location()))
             }
-            Some("}") => {
+            Some('}') => {
                 self.forward();
                 Ok(RBrace(self.get_location()))
             }
 
-            Some(",") => {
+            Some(',') => {
                 self.forward();
                 Ok(Comma(self.get_location()))
             }
-            Some(".") => {
+            Some('.') => {
                 self.forward();
                 Ok(Dot(self.get_location()))
             }
-            Some(":") => {
+            Some(':') => {
                 self.forward();
                 Ok(Colon(self.get_location()))
             }
-            Some(";") => {
+            Some(';') => {
                 self.forward();
                 Ok(Semicolon(self.get_location()))
             }
-            Some(ch) if self.raw_num_regex.is_match(ch) => self.read_num(),
-            Some("'") => self.read_char(),
-            Some("\"") => self.read_str(),
-            Some(ch) if self.word_regex.is_match(ch) => self.read_word(),
+            Some(ch) if ch.is_numeric() => self.read_num(),
+            Some('\'') => self.read_char(),
+            Some('"') => self.read_str(),
+            Some(ch) if ch.is_ascii_alphanumeric() => self.read_word(),
             Some(ch) => {
                 self.push_error(&format!("Invalid character `{}`.", ch));
                 Err(())
             }
-            None => panic!("Not possible."),
+            None => unreachable!(),
         }
     }
 
-    fn read_num(&mut self) -> Result<Token<'a>, ()> {
+    fn read_num(&mut self) -> Result<Token, ()> {
         loop {
             match self.get_cur_ch() {
-                Some(ch) if self.raw_num_regex.is_match(ch) => self.forward(),
+                Some(ch) if ch.is_numeric() || ch == '.' => self.forward(),
                 _ => break,
             }
         }
-        let literal = self.get_slice();
+        let literal = self.get_literal();
         let literal_vec: Vec<&str> = literal.split('.').collect();
         match literal_vec.len() {
             1 => Ok(IntConst {
@@ -332,18 +337,18 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_char(&mut self) -> Result<Token<'a>, ()> {
+    fn read_char(&mut self) -> Result<Token, ()> {
         self.forward();
         loop {
             match self.get_cur_ch() {
-                Some("\\") => {
+                Some('\\') => {
                     self.forward();
                     match self.get_cur_ch() {
-                        Some("n") | Some("'") => self.forward(),
+                        Some('n') | Some('\'') => self.forward(),
                         _ => {}
                     }
                 }
-                Some("'") => {
+                Some('\'') => {
                     self.forward();
                     break;
                 }
@@ -354,8 +359,8 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        let literal = self.get_slice();
-        match literal {
+        let literal = self.get_literal();
+        match literal.as_str() {
             ch if ch.len() == 3 && ch.is_ascii() => Ok(CharConst {
                 literal,
                 location: self.get_location(),
@@ -371,18 +376,18 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_str(&mut self) -> Result<Token<'a>, ()> {
+    fn read_str(&mut self) -> Result<Token, ()> {
         self.forward();
         loop {
             match self.get_cur_ch() {
-                Some("\\") => {
+                Some('\\') => {
                     self.forward();
                     match self.get_cur_ch() {
-                        Some("n") | Some("\"") => self.forward(),
+                        Some('n') | Some('"') => self.forward(),
                         _ => {}
                     }
                 }
-                Some("\"") => {
+                Some('"') => {
                     self.forward();
                     break;
                 }
@@ -393,22 +398,21 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        let literal = self.get_slice();
         Ok(StrConst {
-            literal,
+            literal: self.get_literal(),
             location: self.get_location(),
         })
     }
 
-    fn read_word(&mut self) -> Result<Token<'a>, ()> {
+    fn read_word(&mut self) -> Result<Token, ()> {
         loop {
             match self.get_cur_ch() {
-                Some(ch) if self.word_regex.is_match(ch) => self.forward(),
+                Some(ch) if ch.is_ascii_alphanumeric() => self.forward(),
                 _ => break,
             }
         }
-        let literal = self.get_slice();
-        match literal {
+        let literal = self.get_literal();
+        match literal.as_str() {
             "T" => Ok(T(self.get_location())),
             "void" => Ok(Void(self.get_location())),
             "char" => Ok(Char(self.get_location())),
@@ -444,46 +448,44 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::preprocessor::Preprocessor;
 
     #[test]
-    fn ident_location() {
-        let source = "a b \n \n c";
+    fn location() {
+        let source = "a b \n \n c \n \n";
         let expected_errors = vec![];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens.len(), 3);
-        match tokens[0] {
-            Ident {
-                literal: "a",
-                location:
-                    Location {
-                        line_no: 1,
-                        char_no: 1,
-                    },
-            } => {}
+        match &tokens[0] {
+            Ident { literal, location } => {
+                assert_eq!(literal.as_str(), "a");
+                assert_eq!(location.file_name.as_str(), "file");
+                assert_eq!(location.line_no, 1);
+                assert_eq!(location.char_no, 1);
+            }
             _ => panic!(format!("{:?}", tokens[0])),
         }
-        match tokens[1] {
-            Ident {
-                literal: "b",
-                location:
-                    Location {
-                        line_no: 1,
-                        char_no: 3,
-                    },
-            } => {}
+        match &tokens[1] {
+            Ident { literal, location } => {
+                assert_eq!(literal.as_str(), "b");
+                assert_eq!(location.file_name.as_str(), "file");
+                assert_eq!(location.line_no, 1);
+                assert_eq!(location.char_no, 3);
+            }
             _ => panic!(format!("{:?}", tokens[1])),
         }
-        match tokens[2] {
-            Ident {
-                literal: "c",
-                location:
-                    Location {
-                        line_no: 3,
-                        char_no: 2,
-                    },
-            } => {}
+        match &tokens[2] {
+            Ident { literal, location } => {
+                assert_eq!(literal.as_str(), "c");
+                assert_eq!(location.file_name.as_str(), "file");
+                assert_eq!(location.line_no, 3);
+                assert_eq!(location.char_no, 2);
+            }
             _ => panic!(format!("{:?}", tokens[2])),
         }
     }
@@ -494,220 +496,243 @@ mod tests {
         let expected_errors = vec![];
         let expected_tokens = vec![
             Ident {
-                literal: "a",
-                location: Location::empty(),
+                literal: "a".to_string(),
+                location: Location::default(),
             },
             IntConst {
-                literal: "1",
-                location: Location::empty(),
+                literal: "1".to_string(),
+                location: Location::default(),
             },
             FloatConst {
-                literal: "1.1",
-                location: Location::empty(),
+                literal: "1.1".to_string(),
+                location: Location::default(),
             },
             CharConst {
-                literal: "'\\n'",
-                location: Location::empty(),
+                literal: "'\\n'".to_string(),
+                location: Location::default(),
             },
             CharConst {
-                literal: "'\\''",
-                location: Location::empty(),
+                literal: "'\\''".to_string(),
+                location: Location::default(),
             },
             CharConst {
-                literal: "'a'",
-                location: Location::empty(),
+                literal: "'a'".to_string(),
+                location: Location::default(),
             },
             StrConst {
-                literal: "\"\\n\"",
-                location: Location::empty(),
+                literal: "\"\\n\"".to_string(),
+                location: Location::default(),
             },
             StrConst {
-                literal: "\"\\\"\"",
-                location: Location::empty(),
+                literal: "\"\\\"\"".to_string(),
+                location: Location::default(),
             },
             StrConst {
-                literal: "\"a\"",
-                location: Location::empty(),
+                literal: "\"a\"".to_string(),
+                location: Location::default(),
             },
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
-    fn types() {
+    fn r#type() {
         let source = "T void char short int long float double signed unsigned";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            T(Location::empty()),
-            Void(Location::empty()),
-            Char(Location::empty()),
-            Short(Location::empty()),
-            Int(Location::empty()),
-            Long(Location::empty()),
-            Float(Location::empty()),
-            Double(Location::empty()),
-            Signed(Location::empty()),
-            Unsigned(Location::empty()),
+            T(Location::default()),
+            Void(Location::default()),
+            Char(Location::default()),
+            Short(Location::default()),
+            Int(Location::default()),
+            Long(Location::default()),
+            Float(Location::default()),
+            Double(Location::default()),
+            Signed(Location::default()),
+            Unsigned(Location::default()),
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
-    fn operators() {
-        let source = "+ - * / % ++ -- =\n\n";
+    fn arithmetic() {
+        let source = "+ - * / % ++ -- =";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Plus(Location::empty()),
-            Minus(Location::empty()),
-            Asterisk(Location::empty()),
-            Slash(Location::empty()),
-            Percent(Location::empty()),
-            BiPlus(Location::empty()),
-            BiMinus(Location::empty()),
-            Equal(Location::empty()),
+            Plus(Location::default()),
+            Minus(Location::default()),
+            Asterisk(Location::default()),
+            Slash(Location::default()),
+            Percent(Location::default()),
+            BiPlus(Location::default()),
+            BiMinus(Location::default()),
+            Equal(Location::default()),
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
-    fn relative_operators() {
+    fn relational() {
         let source = "< > <= >= == != && || !";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Small(Location::empty()),
-            Large(Location::empty()),
-            SmallEq(Location::empty()),
-            LargeEq(Location::empty()),
-            EqTo(Location::empty()),
-            NotEqTo(Location::empty()),
-            And(Location::empty()),
-            Or(Location::empty()),
-            Not(Location::empty()),
+            Small(Location::default()),
+            Large(Location::default()),
+            SmallEq(Location::default()),
+            LargeEq(Location::default()),
+            EqTo(Location::default()),
+            NotEqTo(Location::default()),
+            And(Location::default()),
+            Or(Location::default()),
+            Not(Location::default()),
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
-    fn combined_assignment_operators() {
+    fn compound_assignment() {
         let source = "+= -= *= /= %=";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            PlusEq(Location::empty()),
-            MinusEq(Location::empty()),
-            AsteriskEq(Location::empty()),
-            SlashEq(Location::empty()),
-            PercentEq(Location::empty()),
+            PlusEq(Location::default()),
+            MinusEq(Location::default()),
+            AsteriskEq(Location::default()),
+            SlashEq(Location::default()),
+            PercentEq(Location::default()),
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
-    fn parentheses() {
+    fn parenthesis() {
         let source = "( ) [ ] { }";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            LParen(Location::empty()),
-            RParen(Location::empty()),
-            LBracket(Location::empty()),
-            RBracket(Location::empty()),
-            LBrace(Location::empty()),
-            RBrace(Location::empty()),
+            LParen(Location::default()),
+            RParen(Location::default()),
+            LBracket(Location::default()),
+            RBracket(Location::default()),
+            LBrace(Location::default()),
+            RBrace(Location::default()),
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
-    fn keywords() {
+    fn keyword() {
         let source = "switch case default if else do while for continue break return struct";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Switch(Location::empty()),
-            Case(Location::empty()),
-            Default(Location::empty()),
-            If(Location::empty()),
-            Else(Location::empty()),
-            Do(Location::empty()),
-            While(Location::empty()),
-            For(Location::empty()),
-            Continue(Location::empty()),
-            Break(Location::empty()),
-            Return(Location::empty()),
-            Struct(Location::empty()),
+            Switch(Location::default()),
+            Case(Location::default()),
+            Default(Location::default()),
+            If(Location::default()),
+            Else(Location::default()),
+            Do(Location::default()),
+            While(Location::default()),
+            For(Location::default()),
+            Continue(Location::default()),
+            Break(Location::default()),
+            Return(Location::default()),
+            Struct(Location::default()),
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
     fn punctuation() {
-        let source = ", : \n ; . ->";
+        let source = "& . -> , : ;";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            Comma(Location::empty()),
-            Colon(Location::empty()),
-            Semicolon(Location::empty()),
-            Dot(Location::empty()),
-            Arrow(Location::empty()),
+            Ampersand(Location::default()),
+            Dot(Location::default()),
+            Arrow(Location::default()),
+            Comma(Location::default()),
+            Colon(Location::default()),
+            Semicolon(Location::default()),
         ];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
     fn error() {
-        let source = "1 | 1. 1.1.1 \'ab\' \'";
+        let source = "| 1. 1.1.1 \'ab\' \'";
         let expected_errors = vec![
             Error::Lexing {
                 message: "Invalid token `|`.".to_string(),
-                location: Location::empty(),
+                location: Location::default(),
             },
             Error::Lexing {
                 message: "Invalid number literal `1.`.".to_string(),
-                location: Location::empty(),
+                location: Location::default(),
             },
             Error::Lexing {
                 message: "Invalid number literal `1.1.1`.".to_string(),
-                location: Location::empty(),
+                location: Location::default(),
             },
             Error::Lexing {
                 message: "Invalid character literal `\'ab\'`.".to_string(),
-                location: Location::empty(),
+                location: Location::default(),
             },
             Error::Lexing {
                 message: "Unexpected EOF.".to_string(),
-                location: Location::empty(),
+                location: Location::default(),
             },
         ];
-        let expected_tokens = vec![IntConst {
-            literal: "1",
-            location: Location::empty(),
-        }];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        Lexer::new(lines, &mut errors).run().unwrap_err();
         assert_eq!(errors, expected_errors);
-        assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
@@ -715,12 +740,13 @@ mod tests {
         let source = "\"";
         let expected_errors = vec![Error::Lexing {
             message: "Unexpected EOF.".to_string(),
-            location: Location::empty(),
+            location: Location::default(),
         }];
-        let expected_tokens = vec![];
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        Lexer::new(lines, &mut errors).run().unwrap_err();
         assert_eq!(errors, expected_errors);
-        assert_eq!(tokens, expected_tokens);
     }
 }

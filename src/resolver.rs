@@ -1,23 +1,20 @@
 use crate::structure::{Error, Function};
 
 pub struct Resolver<'a> {
-    generic_ast: Option<Vec<Function<'a>>>,
-    errors: Option<Vec<Error>>,
+    generic_ast: Option<Vec<Function>>,
+    errors: &'a mut Vec<Error>,
 }
 
 impl<'a> Resolver<'a> {
-    pub fn new(generic_ast: Vec<Function<'a>>, errors: Vec<Error>) -> Resolver {
+    pub fn new(generic_ast: Vec<Function>, errors: &'a mut Vec<Error>) -> Resolver<'a> {
         Resolver {
             generic_ast: Some(generic_ast),
-            errors: Some(errors),
+            errors,
         }
     }
 
-    pub fn run(&mut self) -> (Vec<Function<'a>>, Vec<Error>) {
-        (
-            self.generic_ast.take().unwrap(),
-            self.errors.take().unwrap(),
-        )
+    pub fn run(&mut self) -> Result<Vec<Function>, ()> {
+        Ok(self.generic_ast.take().unwrap())
     }
 }
 

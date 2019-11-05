@@ -2,14 +2,14 @@
 
 use crate::structure::{Array, Expression, Function, Pointer, Statement, Type};
 
-pub struct Serializer<'a> {
-    ast: Option<Vec<Function<'a>>>,
+pub struct Serializer {
+    ast: Option<Vec<Function>>,
     transformed_source: Option<String>,
     ident_level: usize,
 }
 
-impl<'a> Serializer<'a> {
-    pub fn new(ast: Vec<Function<'a>>) -> Serializer {
+impl Serializer {
+    pub fn new(ast: Vec<Function>) -> Serializer {
         Serializer {
             ast: Some(ast),
             transformed_source: Some(String::new()),
@@ -45,7 +45,7 @@ impl<'a> Serializer<'a> {
         self.transformed_source.as_mut().unwrap().pop();
     }
 
-    fn serialize_function(&mut self, func: Function<'a>) {
+    fn serialize_function(&mut self, func: Function) {
         let Function {
             r#type,
             name,
@@ -54,13 +54,13 @@ impl<'a> Serializer<'a> {
             ..
         } = func;
         self.serialize_type(r#type);
-        self.push_str_space(name);
+        self.push_str_space(&name);
         self.pop_char();
         self.push_str("(");
         if !parameters.is_empty() {
             for (param, r#type) in parameters {
                 self.serialize_type(r#type);
-                self.push_str(param);
+                self.push_str(&param);
                 self.push_str_space(",");
             }
             self.pop_char();
@@ -110,20 +110,17 @@ impl<'a> Serializer<'a> {
                     for (member, r#type) in members {
                         self.push_str(&" ".repeat(self.ident_level * 4));
                         self.serialize_type(r#type.clone());
+                        if r#type.get_pointer_flag() {
+                            self.push_str("*");
+                        }
+                        self.push_str_space(&member);
                         let (array_flag, array_len) = r#type.get_array();
-                        let pointer_flag = r#type.get_pointer_flag();
                         if array_flag {
-                            self.push_str(&member);
                             self.push_str("[");
                             if let Some(len) = array_len {
                                 self.push_str(&len.to_string());
                             }
                             self.push_str_space("]");
-                        } else if pointer_flag {
-                            self.push_str("*");
-                            self.push_str_space(&member);
-                        } else {
-                            self.push_str_space(&member);
                         }
                         self.pop_char();
                         self.push_str_newline(";")
@@ -136,13 +133,13 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    fn serialize_expression(&mut self, expr: Expression<'a>) {
+    fn serialize_expression(&mut self, expr: Expression) {
         match expr {
-            Expression::Ident { value, .. } => self.push_str_space(value),
+            Expression::Ident { value, .. } => self.push_str_space(&value),
             Expression::IntConst { value, .. } => self.push_str_space(&value.to_string()),
             Expression::FloatConst { value, .. } => self.push_str_space(&value.to_string()),
-            Expression::CharConst { value, .. } => self.push_str_space(value),
-            Expression::StrConst { value, .. } => self.push_str_space(value),
+            Expression::CharConst { value, .. } => self.push_str_space(&value),
+            Expression::StrConst { value, .. } => self.push_str_space(&value),
             Expression::Prefix {
                 operator,
                 expression,
@@ -216,11 +213,12 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    fn serialize_statement(&mut self, stmt: Statement<'a>) {
+    fn serialize_statement(&mut self, stmt: Statement) {
         if self.transformed_source.as_ref().unwrap().ends_with('\n') {
             self.push_str(&" ".repeat(self.ident_level * 4));
         }
         match stmt {
+            Statement::Null(_) => self.push_str_newline(";"),
             Statement::Continue(_) => self.push_str_newline("continue;"),
             Statement::Break(_) => self.push_str_newline("break;"),
             Statement::Expr(expr) => {
@@ -255,20 +253,18 @@ impl<'a> Serializer<'a> {
                 let r#type = declarators.last().unwrap().0.clone();
                 self.serialize_type(r#type);
                 for (r#type, ident, init) in declarators {
+                    if r#type.get_pointer_flag() {
+                        self.push_str("*");
+                    }
+                    self.push_str_space(&ident);
                     let (array_flag, array_len) = r#type.get_array();
-                    let pointer_flag = r#type.get_pointer_flag();
                     if array_flag {
-                        self.push_str(ident);
+                        self.pop_char();
                         self.push_str("[");
                         if let Some(len) = array_len {
                             self.push_str(&len.to_string());
                         }
                         self.push_str_space("]");
-                    } else if pointer_flag {
-                        self.push_str("*");
-                        self.push_str_space(ident);
-                    } else {
-                        self.push_str_space(ident);
                     }
                     if let Some(ex) = init {
                         self.push_str_space("=");
@@ -399,61 +395,51 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
+    use crate::preprocessor::Preprocessor;
     use crate::resolver::Resolver;
 
     #[test]
-    fn types() {
-        let source = "void f() {}
-char f(int a) {}
-short f(int a, float b) {}
-int f() {}
-long f() {}
-unsigned short f() {}
-unsigned int f() {}
-unsigned long f() {}
-float f() {}
-double f() {}";
+    fn function() {
+        let source = "
+            void f() {}
+            void f(int a) {}
+            void f(int a, unsigned int b) {}
+        ";
         let expected_transformed_source = "void f() {}
 
-char f(int a) {}
+void f(int a) {}
 
-short f(int a, float b) {}
-
-int f() {}
-
-long f() {}
-
-unsigned short f() {}
-
-unsigned int f() {}
-
-unsigned long f() {}
-
-float f() {}
-
-double f() {}\n";
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
-        let (generic_ast, errors) = Parser::new(tokens, errors).run();
-        let (ast, _errors) = Resolver::new(generic_ast, errors).run();
+void f(int a, unsigned int b) {}
+";
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
         let transformed_source = Serializer::new(ast).run();
-        assert_eq!(transformed_source, expected_transformed_source);
+        assert!(errors.is_empty());
+        assert_eq!(&transformed_source, expected_transformed_source);
     }
 
     #[test]
     fn expression() {
-        let source = "int f(int a) {
-            a;
-            1;
-            1.1;
-            '1';
-            \"1\";
-            +1 + a++;
-            \"1\"[0];
-            f(1);
-            a.b + c->d;
-        }";
-        let expected_transformed_source = "int f(int a) {
+        let source = "
+            void f(int a) {
+                a;
+                1;
+                1.1;
+                '1';
+                \"1\";
+                +1 + a++;
+                \"1\"[0];
+                f(1);
+                a.b;
+                c->d;
+            }
+        ";
+        let expected_transformed_source = "void f(int a) {
     a;
     1;
     1.1;
@@ -462,67 +448,99 @@ double f() {}\n";
     +1 + a++;
     \"1\"[0];
     f(1);
-    a.b + c->d;
-}\n";
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
-        let (generic_ast, errors) = Parser::new(tokens, errors).run();
-        let (ast, _errors) = Resolver::new(generic_ast, errors).run();
+    a.b;
+    c->d;
+}
+";
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
         let transformed_source = Serializer::new(ast).run();
-        assert_eq!(transformed_source, expected_transformed_source);
+        assert!(errors.is_empty());
+        assert_eq!(&transformed_source, expected_transformed_source);
     }
 
     #[test]
     fn statement() {
-        let source = "int f() {
-            int a;
-            int b = 1;
-            int c, d = 2;
-            int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
-            int *h, *i = &a, j = *i;
-            struct A {} a1;
-            struct B {
-                int a;
-            } b1 = { 1 };
-            struct C {
-                int a;
-                float b;
-            } c1 = { 1, 2 };
+        let source = "
+            void f() {
+                {
+                    ;
+                }
 
-            while (1) {
-                continue;
+                T a = 1, a;
+                char a[1];
+                short a[] = { 1 };
+                unsigned short a[1] = { 1 };
+                int a[2] = { 1, 2 };
+                unsigned int *a;
+                long *a = &a;
+                unsigned long a = *a;
+                float a;
+                double a = 1;
+                
+                struct A {} a1;
+                struct B {
+                    int a;
+                } b1 = { 1 };
+                struct C {
+                    int a;
+                    float b;
+                } c1 = { 1, 2 };
+
+                return;
             }
-
-            do {
-                break;
-            } while (1);
-
-            for (a = 1; a < 2; a++) a++;
-            for ( ; ; ) a++;
             
-            if (1) 2;
-            if (1) 2; else 3;
+            int f(int a) {
+                while (1) {
+                    continue;
+                }
 
-            switch (a) {
-                case 1:
-                    1;
-                default:
-                    2;
+                do {
+                    break;
+                } while (1);
+
+                for (a = 1; a < 2; a++) 1;
+
+                for ( ; ; ) 1;
+                
+                if (1) 1;
+
+                if (1) 1; else 1;
+
+                switch (1) {
+                    case 1:
+                        1;
+                }
+
+                switch (1) {
+                    case 1:
+                        1;
+                    default:
+                        1;
+                }
+
+                return 0;
             }
-
-            {
-                1;
-            }
-
-            return 0;
-            return;
-        }";
-        let expected_transformed_source = "int f() {
-    int a;
-    int b = 1;
-    int c, d = 2;
-    int e[] = {}, f[1] = { 1 }, g[2] = { 1, 2 };
-    int *h, *i = &a, j = *i;
+        ";
+        let expected_transformed_source = "void f() {
+    {
+        ;
+    }
+    T a = 1, a;
+    char a[1];
+    short a[] = { 1 };
+    unsigned short a[1] = { 1 };
+    int a[2] = { 1, 2 };
+    unsigned int *a;
+    long *a = &a;
+    unsigned long a = *a;
+    float a;
+    double a = 1;
     struct A {} a1;
     struct B {
         int a;
@@ -531,33 +549,42 @@ double f() {}\n";
         int a;
         float b;
     } c1 = { 1, 2 };
+    return;
+}
+
+int f(int a) {
     while (1) {
         continue;
     }
     do {
         break;
     } while (1);
-    for (a = 1; a < 2; a++) a++;
-    for ( ; ; ) a++;
-    if (1) 2;
-    if (1) 2; else 3;
-    switch (a) {
+    for (a = 1; a < 2; a++) 1;
+    for ( ; ; ) 1;
+    if (1) 1;
+    if (1) 1; else 1;
+    switch (1) {
+        case 1:
+            1;
+    }
+    switch (1) {
         case 1:
             1;
         default:
-            2;
-    }
-    {
-        1;
+            1;
     }
     return 0;
-    return;
-}\n";
-        let errors = Vec::new();
-        let (tokens, errors) = Lexer::new(&source, errors).run();
-        let (generic_ast, errors) = Parser::new(tokens, errors).run();
-        let (ast, _errors) = Resolver::new(generic_ast, errors).run();
+}
+";
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
         let transformed_source = Serializer::new(ast).run();
-        assert_eq!(transformed_source, expected_transformed_source);
+        assert!(errors.is_empty());
+        assert_eq!(&transformed_source, expected_transformed_source);
     }
 }

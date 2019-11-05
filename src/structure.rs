@@ -78,48 +78,45 @@ impl fmt::Display for Error {
         match self {
             Preprocessing { message, location } => write!(
                 f,
-                "{} ({}): {}",
-                "Preprocessing Error".red(),
+                "{} {}: {}",
                 location,
+                "Preprocessing Error".red(),
                 message
             ),
             Lexing { message, location } => {
-                write!(f, "{} ({}): {}", "Lexing Error".red(), location, message)
+                write!(f, "{} {}: {}", location, "Lexing Error".red(), message)
             }
             Parsing { message, location } => {
-                write!(f, "{} ({}): {}", "Parsing Error".red(), location, message)
+                write!(f, "{} {}: {}", location, "Parsing Error".red(), message)
             }
             Resolving { message, location } => {
-                write!(f, "{} ({}): {}", "Resolving Error".red(), location, message)
+                write!(f, "{} {}: {}", location, "Resolving Error".red(), message)
             }
         }
     }
 }
 
 /// Represent a specific location in the source file.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
 pub struct Location {
+    pub file_name: String,
     pub line_no: usize,
     pub char_no: usize,
 }
 
 impl Location {
-    pub fn new(line_no: usize, char_no: usize) -> Location {
-        Location { line_no, char_no }
-    }
-
-    /// Constructor used in dummy `Type` objects.
-    pub fn empty() -> Location {
+    pub fn new(file_name: &str, line_index: usize, char_index: usize) -> Location {
         Location {
-            line_no: 0,
-            char_no: 0,
+            file_name: file_name.to_string(),
+            line_no: line_index + 1,
+            char_no: char_index + 1,
         }
     }
 }
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.line_no, self.char_no)
+        write!(f, "{} ({}:{})", self.file_name, self.line_no, self.char_no)
     }
 }
 
@@ -133,27 +130,12 @@ impl PartialEq for Location {
 
 /// Tokens used by the lexer.
 #[derive(Debug, PartialEq)]
-pub enum Token<'a> {
-    Ident {
-        literal: &'a str,
-        location: Location,
-    },
-    IntConst {
-        literal: &'a str,
-        location: Location,
-    },
-    FloatConst {
-        literal: &'a str,
-        location: Location,
-    },
-    CharConst {
-        literal: &'a str,
-        location: Location,
-    },
-    StrConst {
-        literal: &'a str,
-        location: Location,
-    },
+pub enum Token {
+    Ident { literal: String, location: Location },
+    IntConst { literal: String, location: Location },
+    FloatConst { literal: String, location: Location },
+    CharConst { literal: String, location: Location },
+    StrConst { literal: String, location: Location },
 
     T(Location),
     Void(Location),
@@ -219,7 +201,7 @@ pub enum Token<'a> {
     Semicolon(Location),
 }
 
-impl<'a> Locate for Token<'a> {
+impl Locate for Token {
     fn locate(&self) -> Location {
         use Token::*;
 
@@ -228,7 +210,7 @@ impl<'a> Locate for Token<'a> {
             | IntConst { location, .. }
             | FloatConst { location, .. }
             | CharConst { location, .. }
-            | StrConst { location, .. } => *location,
+            | StrConst { location, .. } => location.clone(),
 
             T(loc) | Void(loc) | Char(loc) | Short(loc) | Int(loc) | Long(loc) | Float(loc)
             | Double(loc) | Signed(loc) | Unsigned(loc) | Plus(loc) | Minus(loc)
@@ -239,7 +221,7 @@ impl<'a> Locate for Token<'a> {
             | LBracket(loc) | RBracket(loc) | LBrace(loc) | RBrace(loc) | Switch(loc)
             | Case(loc) | Default(loc) | If(loc) | Else(loc) | Do(loc) | While(loc) | For(loc)
             | Continue(loc) | Break(loc) | Return(loc) | Struct(loc) | Ampersand(loc)
-            | Dot(loc) | Arrow(loc) | Comma(loc) | Colon(loc) | Semicolon(loc) => *loc,
+            | Dot(loc) | Arrow(loc) | Comma(loc) | Colon(loc) | Semicolon(loc) => loc.clone(),
         }
     }
 }
@@ -321,7 +303,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Void {
                 pointer_flag,
@@ -331,7 +313,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Char {
                 pointer_flag,
@@ -341,7 +323,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Short {
                 signed_flag,
@@ -353,7 +335,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Int {
                 signed_flag,
@@ -365,7 +347,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Long {
                 signed_flag,
@@ -377,7 +359,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Float {
                 pointer_flag,
@@ -387,7 +369,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Double {
                 pointer_flag,
@@ -397,7 +379,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
             Struct {
                 name,
@@ -411,7 +393,7 @@ impl Array for Type {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
-                location: *location,
+                location: location.clone(),
             },
         }
     }
@@ -603,7 +585,7 @@ impl Pointer for Type {
     }
 }
 
-impl<'a> Locate for Type {
+impl Locate for Type {
     fn locate(&self) -> Location {
         use Type::*;
 
@@ -616,7 +598,7 @@ impl<'a> Locate for Type {
             | Long { location, .. }
             | Float { location, .. }
             | Double { location, .. }
-            | Struct { location, .. } => *location,
+            | Struct { location, .. } => location.clone(),
         }
     }
 }
@@ -649,46 +631,46 @@ impl Type {
                 array_flag,
                 array_len: None,
                 pointer_flag,
-                location: Location::empty(),
+                location: Location::default(),
             },
             "Char" => Type::Char {
                 array_flag,
                 array_len: None,
                 pointer_flag,
-                location: Location::empty(),
+                location: Location::default(),
             },
             "Short" => Short {
                 signed_flag,
                 array_flag,
                 array_len: None,
                 pointer_flag,
-                location: Location::empty(),
+                location: Location::default(),
             },
             "Int" => Int {
                 signed_flag,
                 array_flag,
                 array_len: None,
                 pointer_flag,
-                location: Location::empty(),
+                location: Location::default(),
             },
             "Long" => Long {
                 signed_flag,
                 array_flag,
                 array_len: None,
                 pointer_flag,
-                location: Location::empty(),
+                location: Location::default(),
             },
             "Float" => Float {
                 array_flag,
                 array_len: None,
                 pointer_flag,
-                location: Location::empty(),
+                location: Location::default(),
             },
             "Double" => Double {
                 array_flag,
                 array_len: None,
                 pointer_flag,
-                location: Location::empty(),
+                location: Location::default(),
             },
             _ => unreachable!(),
         }
@@ -697,9 +679,9 @@ impl Type {
 
 /// AST nodes for expressions.
 #[derive(Debug, PartialEq)]
-pub enum Expression<'a> {
+pub enum Expression {
     Ident {
-        value: &'a str,
+        value: String,
         location: Location,
     },
     IntConst {
@@ -711,42 +693,42 @@ pub enum Expression<'a> {
         location: Location,
     },
     CharConst {
-        value: &'a str,
+        value: String,
         location: Location,
     },
     StrConst {
-        value: &'a str,
+        value: String,
         location: Location,
     },
     Prefix {
-        operator: &'a str,
-        expression: Box<Expression<'a>>,
+        operator: &'static str,
+        expression: Box<Expression>,
         location: Location,
     },
     Infix {
-        left: Box<Expression<'a>>,
-        operator: &'a str,
-        right: Box<Expression<'a>>,
+        left: Box<Expression>,
+        operator: &'static str,
+        right: Box<Expression>,
     },
     Suffix {
-        operator: &'a str,
-        expression: Box<Expression<'a>>,
+        operator: &'static str,
+        expression: Box<Expression>,
     },
     Index {
-        expression: Box<Expression<'a>>,
-        index: Box<Expression<'a>>,
+        expression: Box<Expression>,
+        index: Box<Expression>,
     },
     Call {
-        expression: Box<Expression<'a>>,
-        arguments: Vec<Expression<'a>>,
+        expression: Box<Expression>,
+        arguments: Vec<Expression>,
     },
     InitList {
-        expressions: Vec<Expression<'a>>,
+        expressions: Vec<Expression>,
         location: Location,
     },
 }
 
-impl<'a> Locate for Expression<'a> {
+impl Locate for Expression {
     fn locate(&self) -> Location {
         use Expression::*;
 
@@ -757,7 +739,7 @@ impl<'a> Locate for Expression<'a> {
             | CharConst { location, .. }
             | StrConst { location, .. }
             | Prefix { location, .. }
-            | InitList { location, .. } => *location,
+            | InitList { location, .. } => location.clone(),
             Infix { left, .. } => left.locate(),
             Suffix { expression, .. } => expression.locate(),
             Index { expression, .. } => expression.locate(),
@@ -768,82 +750,85 @@ impl<'a> Locate for Expression<'a> {
 
 /// AST nodes for statements.
 #[derive(Debug, PartialEq)]
-pub enum Statement<'a> {
+pub enum Statement {
+    Null(Location),
     Continue(Location),
     Break(Location),
-    Expr(Expression<'a>),
+    Expr(Expression),
     Return {
-        expression: Option<Expression<'a>>,
+        expression: Option<Expression>,
         location: Location,
     },
     Block {
-        statements: Vec<Statement<'a>>,
+        statements: Vec<Statement>,
         location: Location,
     },
     Def {
-        declarators: Vec<(Type, &'a str, Option<Expression<'a>>)>,
+        declarators: Vec<(Type, String, Option<Expression>)>,
         location: Location,
     },
     While {
-        condition: Expression<'a>,
-        body: Box<Statement<'a>>,
+        condition: Expression,
+        body: Box<Statement>,
         location: Location,
     },
     Do {
-        condition: Expression<'a>,
-        body: Box<Statement<'a>>,
+        condition: Expression,
+        body: Box<Statement>,
         location: Location,
     },
     For {
-        initialization: Option<Expression<'a>>,
-        condition: Option<Expression<'a>>,
-        increment: Option<Expression<'a>>,
-        body: Box<Statement<'a>>,
+        initialization: Option<Expression>,
+        condition: Option<Expression>,
+        increment: Option<Expression>,
+        body: Box<Statement>,
         location: Location,
     },
     If {
-        condition: Expression<'a>,
-        body: Box<Statement<'a>>,
-        alternative: Option<Box<Statement<'a>>>,
+        condition: Expression,
+        body: Box<Statement>,
+        alternative: Option<Box<Statement>>,
         location: Location,
     },
     Switch {
-        expression: Expression<'a>,
-        branches: Vec<(Expression<'a>, Vec<Statement<'a>>)>,
-        default: Option<Vec<Statement<'a>>>,
+        expression: Expression,
+        branches: Vec<(Expression, Vec<Statement>)>,
+        default: Option<Vec<Statement>>,
         location: Location,
     },
 }
 
-impl<'a> Locate for Statement<'a> {
+impl Locate for Statement {
     fn locate(&self) -> Location {
         use Statement::*;
 
         match self {
-            Continue(loc) | Break(loc) => *loc,
+            Null(loc) | Continue(loc) | Break(loc) => loc.clone(),
             Expr(expr) => expr.locate(),
-            Return { location, .. } | Block { location, .. } | Def { location, .. } => *location,
+            Return { location, .. } | Block { location, .. } | Def { location, .. } => {
+                location.clone()
+            }
             While { location, .. }
             | Do { location, .. }
             | For { location, .. }
             | If { location, .. }
-            | Switch { location, .. } => *location,
+            | Switch { location, .. } => location.clone(),
         }
     }
 }
 
 /// AST nodes for functions.
 #[derive(Debug, PartialEq)]
-pub struct Function<'a> {
+pub struct Function {
     pub r#type: Type,
-    pub name: &'a str,
-    pub parameters: IndexMap<&'a str, Type>,
-    pub body: Statement<'a>,
+    pub name: String,
+    pub parameters: IndexMap<String, Type>,
+    pub body: Statement,
     pub location: Location,
 }
 
-impl<'a> Locate for Function<'a> {
+impl Locate for Function {
     fn locate(&self) -> Location {
-        self.location
+        self.location.clone()
     }
 }

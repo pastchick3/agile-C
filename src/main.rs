@@ -20,11 +20,12 @@ struct Opt {
 
 fn main() {
     let opt = Opt::from_args();
-    let source = fs::read_to_string(opt.input).unwrap_or_else(|err| {
+    let source = fs::read_to_string(&opt.input).unwrap_or_else(|err| {
         eprintln!("Fail to read the input file: {}.", err);
         process::exit(1);
     });
-    let transpiler = Transpiler::new(&source).unwrap_or_else(|err| {
+    let file_name = opt.input.file_name().unwrap().to_str().unwrap();
+    let mut transpiler = Transpiler::new(file_name, &source).unwrap_or_else(|err| {
         eprintln!("Fail to construct the transpiler: {}.", err);
         process::exit(1);
     });
