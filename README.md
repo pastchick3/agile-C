@@ -58,6 +58,7 @@ Agile C mainly consists of 5 components listed as below:
 | Module | Source | Functionality |
 | --- | --- | --- |
 | Structure | src/structure.rs | Define all data structures including `Token`, `Expression`, etc. |
+| Preprocessor | src/preprocessor.rs | Recursively `include` all required source files |
 | Lexer | src/lexer.rs| Transform the source file into a token stream. |
 | Parser | src/parser.rs| Parse the token stream into AST. Add dummy type parameters if necessary. |
 | Resolver | src/resolver.rs| Resolve dummy type parameters to concrete types. Also perform basic type checking. |
@@ -179,18 +180,11 @@ After that, these primary expressions will be combined into all other expression
     - Perform a chain of inference instead of just one-step inference.
     - Perform inference between function arguments and parameters.
 - ML style type inference - Implicit parametric polymorphism - P329 
-- Backend, GC.
+
 - seperate of struct def and var def.
-- arthmetic paren
-- def in for
-- Better syntax error recovery:
-    - Panic mode (safe symbols)
-    - Phase level recovery
-    - Context-specific look-ahead
-    - Error productions
-- location to file
-- change all push_err to use location directly
-- refactor all tests to finer granularity
+
+
+
 
 ## Grammar
 

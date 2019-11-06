@@ -97,11 +97,21 @@ impl fmt::Display for Error {
 }
 
 /// Represent a specific location in the source file.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Location {
     pub file_name: String,
     pub line_no: usize,
     pub char_no: usize,
+}
+
+impl Default for Location {
+    fn default() -> Self {
+        Location {
+            file_name: "EOF".to_string(),
+            line_no: 0,
+            char_no: 0,
+        }
+    }
 }
 
 impl Location {
@@ -714,6 +724,10 @@ pub enum Expression {
         operator: &'static str,
         expression: Box<Expression>,
     },
+    Group {
+        expression: Box<Expression>,
+        location: Location,
+    },
     Index {
         expression: Box<Expression>,
         index: Box<Expression>,
@@ -739,6 +753,7 @@ impl Locate for Expression {
             | CharConst { location, .. }
             | StrConst { location, .. }
             | Prefix { location, .. }
+            | Group { location, .. }
             | InitList { location, .. } => location.clone(),
             Infix { left, .. } => left.locate(),
             Suffix { expression, .. } => expression.locate(),
@@ -778,7 +793,7 @@ pub enum Statement {
         location: Location,
     },
     For {
-        initialization: Option<Expression>,
+        initialization: Option<Box<Statement>>,
         condition: Option<Expression>,
         increment: Option<Expression>,
         body: Box<Statement>,

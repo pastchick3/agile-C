@@ -170,6 +170,12 @@ impl Serializer {
                 self.pop_char();
                 self.push_str_space(operator);
             }
+            Expression::Group {expression, ..} => {
+                self.push_str("(");
+                self.serialize_expression(*expression);
+                self.pop_char();
+                self.push_str_space(")");
+            }
             Expression::Index { expression, index } => {
                 self.serialize_expression(*expression);
                 self.pop_char();
@@ -312,7 +318,8 @@ impl Serializer {
                 self.push_str("(");
                 match initialization {
                     Some(ex) => {
-                        self.serialize_expression(ex);
+                        self.serialize_statement(*ex);
+                        self.pop_char();
                         self.pop_char();
                     }
                     None => self.push_str_space(""),
@@ -432,7 +439,7 @@ void f(int a, unsigned int b) {}
                 1.1;
                 '1';
                 \"1\";
-                +1 + a++;
+                +1 + (a++);
                 \"1\"[0];
                 f(1);
                 a.b;
@@ -445,7 +452,7 @@ void f(int a, unsigned int b) {}
     1.1;
     '1';
     \"1\";
-    +1 + a++;
+    +1 + (a++);
     \"1\"[0];
     f(1);
     a.b;

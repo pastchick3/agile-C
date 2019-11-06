@@ -37,46 +37,7 @@ impl<'a> Preprocessor<'a> {
             modification = false;
             lines = lines
                 .into_iter()
-                .map(|(file_name, line_index, line)| {
-                    if let Some(caps) = self.include_regex.captures(&line) {
-                        modification = true;
-                        let left_delimiter = caps.get(1).unwrap().as_str();
-                        let included_file_name = caps.get(2).unwrap().as_str();
-                        let right_delimiter = caps.get(3).unwrap().as_str();
-                        if left_delimiter != right_delimiter {
-                            self.push_error(
-                                "Expect `\"file_name\"` or `<file_name>`.",
-                                Location::new(&file_name, line_index, 0),
-                            );
-                            vec![(file_name, line_index, String::new())]
-                        } else {
-                            match fs::read_to_string(included_file_name) {
-                                Ok(included_source) => included_source
-                                    .lines()
-                                    .enumerate()
-                                    .map(|(included_line_index, line)| {
-                                        (
-                                            included_file_name.to_string(),
-                                            included_line_index,
-                                            line.to_string(),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                                Err(err) => {
-                                    let message =
-                                        format!("Fail to read the included file: {}.", err);
-                                    self.push_error(
-                                        &message,
-                                        Location::new(&file_name, line_index, 0),
-                                    );
-                                    vec![(file_name, line_index, String::new())]
-                                }
-                            }
-                        }
-                    } else {
-                        vec![(file_name, line_index, line)]
-                    }
-                })
+                .map(|line| self.include(&mut modification, line))
                 .flatten()
                 .collect();
         }
@@ -92,6 +53,47 @@ impl<'a> Preprocessor<'a> {
             message: message.to_string(),
             location,
         });
+    }
+
+    fn include(
+        &mut self,
+        modification: &mut bool,
+        (file_name, line_index, line): (String, usize, String),
+    ) -> Vec<(String, usize, String)> {
+        if let Some(caps) = self.include_regex.captures(&line) {
+            *modification = true;
+            let left_delimiter = caps.get(1).unwrap().as_str();
+            let included_file_name = caps.get(2).unwrap().as_str();
+            let right_delimiter = caps.get(3).unwrap().as_str();
+            if left_delimiter != right_delimiter {
+                self.push_error(
+                    "Expect `\"file_name\"` or `<file_name>`.",
+                    Location::new(&file_name, line_index, 0),
+                );
+                vec![(file_name, line_index, String::new())]
+            } else {
+                match fs::read_to_string(included_file_name) {
+                    Ok(included_source) => included_source
+                        .lines()
+                        .enumerate()
+                        .map(|(included_line_index, line)| {
+                            (
+                                included_file_name.to_string(),
+                                included_line_index,
+                                line.to_string(),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    Err(err) => {
+                        let message = format!("Fail to read the included file: {}.", err);
+                        self.push_error(&message, Location::new(&file_name, line_index, 0));
+                        vec![(file_name, line_index, String::new())]
+                    }
+                }
+            }
+        } else {
+            vec![(file_name, line_index, line)]
+        }
     }
 }
 

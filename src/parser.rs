@@ -584,14 +584,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement_for(&mut self, location: Location) -> Result<Statement, ()> {
+        self.environment.enter();
         self.assert_token("LParen")
             .map_err(|_| self.skip_to_semicolon())?;
         let initialization = match self.tokens.last() {
-            Some(Token::Semicolon(_)) => None,
-            _ => Some(self.parse_expression(0)?),
+            Some(Token::Semicolon(_)) => {
+                self.tokens.pop();
+                None
+            },
+            _ => Some(Box::new(self.parse_statement()?)),
         };
-        self.assert_token("Semicolon")
-            .map_err(|_| self.skip_to_semicolon())?;
         let condition = match self.tokens.last() {
             Some(Token::Semicolon(_)) => None,
             _ => Some(self.parse_expression(0)?),
@@ -607,6 +609,7 @@ impl<'a> Parser<'a> {
         let body = self
             .parse_statement()
             .map_err(|_| self.skip_to_semicolon())?;
+        self.environment.leave();
         Ok(Statement::For {
             initialization,
             condition,
@@ -943,11 +946,14 @@ impl<'a> Parser<'a> {
                 expression: Box::new(self.parse_expression(precedence)?),
                 location,
             }),
-            Some(Token::LParen(_)) => {
-                let expr = self.parse_expression(0);
+            Some(Token::LParen(location)) => {
+                let expr = self.parse_expression(0)?;
                 self.assert_token("RParen")
                     .map_err(|_| self.skip_to_semicolon())?;
-                expr
+                Ok(Expression::Group{
+                    expression: Box::new(expr),
+                    location,
+                })
             }
             Some(tk) => {
                 self.push_error("Expect a prefix operator.", tk.locate());
@@ -1869,8 +1875,10 @@ mod tests {
     #[test]
     fn statement_for() {
         let source = "
-            void f() {
-                for ( ; 1; ) ;
+            void f(int a) {
+                for ( ; ; ) ;
+                for (a = 1; 1; a++) ;
+                for (int b = 1; 1; b++) ;
             }
         ";
         let expected_errors = vec![];
@@ -1882,18 +1890,87 @@ mod tests {
                 location: Location::default(),
             },
             name: "f".to_string(),
-            parameters: IndexMap::new(),
-            body: Statement::Block {
-                statements: vec![Statement::For {
-                    initialization: None,
-                    condition: Some(Expression::IntConst {
-                        value: 1,
-                        location: Location::default(),
-                    }),
-                    increment: None,
-                    body: Box::new(Statement::Null(Location::default())),
+            parameters: [(
+                "a".to_string(),
+                Type::Int {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
                     location: Location::default(),
-                }],
+                },
+            )]
+            .iter()
+            .cloned()
+            .collect(),
+            body: Statement::Block {
+                statements: vec![
+                    Statement::For {
+                        initialization: None,
+                        condition: None,
+                        increment: None,
+                        body: Box::new(Statement::Null(Location::default())),
+                        location: Location::default(),
+                    },
+                    Statement::For {
+                        initialization: Some(Box::new(Statement::Expr(Expression::Infix {
+                            left: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                            operator: "=",
+                            right: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        }))),
+                        condition: Some(Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        }),
+                        increment: Some(Expression::Suffix {
+                            operator: "++",
+                            expression: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                        }),
+                        body: Box::new(Statement::Null(Location::default())),
+                        location: Location::default(),
+                    },
+                    Statement::For {
+                        initialization: Some(Box::new(Statement::Def {
+                            declarators: vec![(
+                                Type::Int {
+                                    signed_flag: true,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                },
+                                "b".to_string(),
+                                Some(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                            )],
+                            location: Location::default(),
+                        })),
+                        condition: Some(Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        }),
+                        increment: Some(Expression::Suffix {
+                            operator: "++",
+                            expression: Box::new(Expression::Ident {
+                                value: "b".to_string(),
+                                location: Location::default(),
+                            }),
+                        }),
+                        body: Box::new(Statement::Null(Location::default())),
+                        location: Location::default(),
+                    },
+                ],
                 location: Location::default(),
             },
             location: Location::default(),
@@ -2136,7 +2213,8 @@ mod tests {
                         right: Box::new(Expression::Infix {
                             left: Box::new(Expression::Infix {
                                 left: Box::new(Expression::Infix {
-                                    left: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::Group {
+                                        expression: Box::new(Expression::Infix {
                                         left: Box::new(Expression::Prefix {
                                             operator: "--",
                                             location: Location::default(),
@@ -2153,6 +2231,8 @@ mod tests {
                                                 location: Location::default(),
                                             }),
                                         }),
+                                    }),
+                                        location: Location::default(),
                                     }),
                                     operator: "*",
                                     right: Box::new(Expression::Suffix {
