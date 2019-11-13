@@ -72,7 +72,7 @@ impl<'a> Parser<'a> {
             .collect(); // We will use `Vector.pop()` and `Vector.last()` to get tokens.
         Parser {
             tokens,
-            errors: errors,
+            errors,
             generic_ast: Some(Vec::new()),
             environment: Environment::new(),
         }
@@ -99,7 +99,7 @@ impl<'a> Parser<'a> {
                         .generic_ast
                         .as_mut()
                         .unwrap()
-                        .push(StaticObject::Function(func)),
+                        .push(StaticObject::Function(Box::new(func))),
                     Err(_) => self.tokens.clear(),
                 },
             }
@@ -1223,7 +1223,7 @@ mod tests {
     fn function_empty() {
         let source = "void f() {}";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1237,7 +1237,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1252,7 +1252,7 @@ mod tests {
     fn function_single() {
         let source = "void f(int a) {}";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1278,7 +1278,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1297,7 +1297,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
-            StaticObject::Function(Function {
+            StaticObject::Function(Box::new(Function {
                 r#type: Type::Void {
                     array_flag: false,
                     array_len: None,
@@ -1311,8 +1311,8 @@ mod tests {
                     location: Location::default(),
                 },
                 location: Location::default(),
-            }),
-            StaticObject::Function(Function {
+            })),
+            StaticObject::Function(Box::new(Function {
                 r#type: Type::Void {
                     array_flag: false,
                     array_len: None,
@@ -1350,7 +1350,7 @@ mod tests {
                     location: Location::default(),
                 },
                 location: Location::default(),
-            }),
+            })),
         ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
@@ -1368,7 +1368,7 @@ mod tests {
             void f() ;
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1379,7 +1379,7 @@ mod tests {
             parameters: IndexMap::new(),
             body: Statement::Null(Location::default()),
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1394,7 +1394,7 @@ mod tests {
     fn statement_continue() {
         let source = "void f() { continue; }";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1408,7 +1408,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1423,7 +1423,7 @@ mod tests {
     fn statement_break() {
         let source = "void f() { break; }";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1437,7 +1437,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1457,7 +1457,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1483,7 +1483,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1511,7 +1511,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1796,7 +1796,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1823,7 +1823,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2016,7 +2016,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2035,7 +2035,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2056,7 +2056,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2075,7 +2075,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2096,7 +2096,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2117,7 +2117,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2216,7 +2216,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2236,7 +2236,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2269,7 +2269,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2295,7 +2295,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2349,7 +2349,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2372,7 +2372,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2407,7 +2407,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2426,7 +2426,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2502,7 +2502,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2521,7 +2521,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2598,7 +2598,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2617,7 +2617,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2669,7 +2669,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2688,7 +2688,7 @@ mod tests {
             a + *a + &a + a->a;
         }";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2763,7 +2763,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2783,7 +2783,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Function {
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             r#type: Type::T {
                 array_flag: false,
                 array_len: None,
@@ -2842,7 +2842,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        })];
+        }))];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()

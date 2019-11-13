@@ -1,12 +1,11 @@
-pub fn get_library(name: &str) -> Option<String> {
+pub fn get_library(name: &str) -> Option<&str> {
     match name {
-        "_test" => Some("_test".to_string()),
-        "assert.h" => Some(
-            "
-            void assert(int expression);
-        "
-            .to_string(),
-        ),
+        "_test" => Some("_test"),
+        "assert.h" => Some(ASSERT_H),
         _ => None,
     }
 }
+
+const ASSERT_H: &str = "
+    void assert(int expression);
+";

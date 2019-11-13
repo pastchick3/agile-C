@@ -48,7 +48,7 @@ impl Serializer {
     fn serialize_static_object(&mut self, object: StaticObject) {
         match object {
             StaticObject::Type(r#type) => self.serialize_type(r#type),
-            StaticObject::Function(func) => self.serialize_function(func),
+            StaticObject::Function(func) => self.serialize_function(*func),
         }
     }
 

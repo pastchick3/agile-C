@@ -176,22 +176,17 @@ After that, these primary expressions will be combined into all other expression
 
 ## TODO
 
-- More powerful type constrains so that we can:
-    - Perform a chain of inference instead of just one-step inference.
-    - Perform inference between function arguments and parameters.
-- ML style type inference - Implicit parametric polymorphism - P329 
+char? Num
+Bool? Num + ptr -> Bool -> T > char
+Array? const
+Pointer? invar
+Struct? invar
+literal? T > Tmin
 
-- seperate of struct def and var def, and static struct.
-
-In (ANSI) C99, you can use a designated initializer to initialize a structure:
-
-MY_TYPE a = { .flag = true, .value = 123, .stuff = 0.456 };
-
-Edit: Other members are initialized as zero: "Omitted field members are implicitly initialized the same as objects that have static storage duration." (https://gcc.gnu.org/onlinedocs/gcc/Designated-Inits.html)
-
-
-we will break struct parser from def parser, and make a new enum like StaticObject containing function and struct.
-- include reverse in serializer
+char <- unsigned short <- unsigned int <- unsigned long <- float <- double
+^            ^                 ^                            |
+|            |                 |                            |
+└ short <- int <------------ long <-------------------------┘
 
 ## Grammar
 

@@ -854,5 +854,5 @@ impl Locate for Function {
 #[derive(Debug, PartialEq)]
 pub enum StaticObject {
     Type(Type),
-    Function(Function),
+    Function(Box<Function>), // Boxing the large fields to reduce the total size of the enum.
 }
