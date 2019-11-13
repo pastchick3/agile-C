@@ -79,12 +79,30 @@ impl<'a> Lexer<'a> {
     }
 
     fn get_literal(&self) -> String {
-        let line = &self.lines[self.start_line_index].2;
-        if self.char_index == 0 {
-            line[self.start_char_index..].to_string()
+        let mut literal = String::new();
+        let mut line_index = self.start_line_index;
+        if line_index == self.line_index {
+            let (_, _, line) = &self.lines[line_index];
+            literal.push_str(&line[self.start_char_index..self.char_index]);
         } else {
-            line[self.start_char_index..self.char_index].to_string()
+            let (_, _, line) = &self.lines[line_index];
+            literal.push_str(&line[self.start_char_index..]);
+            literal.push('\n');
+            line_index += 1;
+            while line_index < self.line_index {
+                let (_, _, line) = &self.lines[line_index];
+                literal.push_str(&line);
+                literal.push('\n');
+                line_index += 1;
+            }
+            if self.char_index == 0 {
+                literal.pop();
+            } else {
+                let (_, _, line) = &self.lines[line_index];
+                literal.push_str(&line[..self.char_index]);
+            }
         }
+        literal
     }
 
     fn get_location(&self) -> Location {
@@ -181,6 +199,43 @@ impl<'a> Lexer<'a> {
                     Some('=') => {
                         self.forward();
                         Ok(SlashEq(self.get_location()))
+                    }
+                    Some('/') => {
+                        while !self.eof && self.line_index == self.start_line_index {
+                            self.forward();
+                        }
+                        Ok(Comment {
+                            literal: self.get_literal(),
+                            location: self.get_location(),
+                        })
+                    }
+                    Some('*') => {
+                        self.forward();
+                        let mut asterisk_flag = false;
+                        if let Some('*') = self.get_cur_ch() {
+                            asterisk_flag = true;
+                        }
+                        self.forward();
+                        loop {
+                            if self.eof {
+                                break;
+                            } else if asterisk_flag && self.get_cur_ch() == Some('/') {
+                                self.forward();
+                                break;
+                            } else if asterisk_flag && self.get_cur_ch() != Some('*') {
+                                asterisk_flag = false;
+                                self.forward();
+                            } else if !asterisk_flag && self.get_cur_ch() == Some('*') {
+                                asterisk_flag = true;
+                                self.forward();
+                            } else {
+                                self.forward();
+                            }
+                        }
+                        Ok(Comment {
+                            literal: self.get_literal(),
+                            location: self.get_location(),
+                        })
                     }
                     _ => Ok(Slash(self.get_location())),
                 }
@@ -529,6 +584,52 @@ mod tests {
             },
             StrConst {
                 literal: "\"a\"".to_string(),
+                location: Location::default(),
+            },
+        ];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(tokens, expected_tokens);
+    }
+
+    #[test]
+    fn comment() {
+        let source = "
+            a // 1
+            /*
+            */ a /*
+            * / 1
+            */
+        ";
+        let expected_errors = vec![];
+        let expected_tokens = vec![
+            Ident {
+                literal: "a".to_string(),
+                location: Location::default(),
+            },
+            Comment {
+                literal: "// 1".to_string(),
+                location: Location::default(),
+            },
+            Comment {
+                literal: "/*
+            */"
+                .to_string(),
+                location: Location::default(),
+            },
+            Ident {
+                literal: "a".to_string(),
+                location: Location::default(),
+            },
+            Comment {
+                literal: "/*
+            * / 1
+            */"
+                .to_string(),
                 location: Location::default(),
             },
         ];

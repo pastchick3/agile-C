@@ -1,5 +1,6 @@
 //! A type inference transpiler for C programming language
 
+mod cstdlib;
 mod lexer;
 mod parser;
 mod preprocessor;

@@ -146,6 +146,7 @@ pub enum Token {
     FloatConst { literal: String, location: Location },
     CharConst { literal: String, location: Location },
     StrConst { literal: String, location: Location },
+    Comment { literal: String, location: Location },
 
     T(Location),
     Void(Location),
@@ -220,7 +221,8 @@ impl Locate for Token {
             | IntConst { location, .. }
             | FloatConst { location, .. }
             | CharConst { location, .. }
-            | StrConst { location, .. } => location.clone(),
+            | StrConst { location, .. }
+            | Comment { location, .. } => location.clone(),
 
             T(loc) | Void(loc) | Char(loc) | Short(loc) | Int(loc) | Long(loc) | Float(loc)
             | Double(loc) | Signed(loc) | Unsigned(loc) | Plus(loc) | Minus(loc)
@@ -737,7 +739,7 @@ pub enum Expression {
         arguments: Vec<Expression>,
     },
     InitList {
-        expressions: Vec<Expression>,
+        pairs: Vec<(Option<String>, Expression)>,
         location: Location,
     },
 }
@@ -779,6 +781,7 @@ pub enum Statement {
         location: Location,
     },
     Def {
+        base_type: Type,
         declarators: Vec<(Type, String, Option<Expression>)>,
         location: Location,
     },
@@ -846,4 +849,10 @@ impl Locate for Function {
     fn locate(&self) -> Location {
         self.location.clone()
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum StaticObject {
+    Type(Type),
+    Function(Function),
 }

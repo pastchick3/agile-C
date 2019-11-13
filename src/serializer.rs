@@ -1,15 +1,15 @@
 //! A serializer serializing a complete AST to a output string.
 
-use crate::structure::{Array, Expression, Function, Pointer, Statement, Type};
+use crate::structure::{Array, Expression, Function, Pointer, Statement, StaticObject, Type};
 
 pub struct Serializer {
-    ast: Option<Vec<Function>>,
+    ast: Option<Vec<StaticObject>>,
     transformed_source: Option<String>,
     ident_level: usize,
 }
 
 impl Serializer {
-    pub fn new(ast: Vec<Function>) -> Serializer {
+    pub fn new(ast: Vec<StaticObject>) -> Serializer {
         Serializer {
             ast: Some(ast),
             transformed_source: Some(String::new()),
@@ -22,7 +22,7 @@ impl Serializer {
             .take()
             .unwrap()
             .into_iter()
-            .for_each(|func| self.serialize_function(func));
+            .for_each(|obj| self.serialize_static_object(obj));
         self.pop_char();
         self.transformed_source.take().unwrap()
     }
@@ -43,6 +43,13 @@ impl Serializer {
 
     fn pop_char(&mut self) {
         self.transformed_source.as_mut().unwrap().pop();
+    }
+
+    fn serialize_static_object(&mut self, object: StaticObject) {
+        match object {
+            StaticObject::Type(r#type) => self.serialize_type(r#type),
+            StaticObject::Function(func) => self.serialize_function(func),
+        }
     }
 
     fn serialize_function(&mut self, func: Function) {
@@ -170,7 +177,7 @@ impl Serializer {
                 self.pop_char();
                 self.push_str_space(operator);
             }
-            Expression::Group {expression, ..} => {
+            Expression::Group { expression, .. } => {
                 self.push_str("(");
                 self.serialize_expression(*expression);
                 self.pop_char();
@@ -202,12 +209,17 @@ impl Serializer {
                 }
                 self.push_str_space(")");
             }
-            Expression::InitList { expressions, .. } => {
-                if expressions.is_empty() {
+            Expression::InitList { pairs, .. } => {
+                if pairs.is_empty() {
                     return self.push_str_space("{}");
                 }
                 self.push_str_space("{");
-                for expr in expressions {
+                for (member, expr) in pairs {
+                    if let Some(name) = member {
+                        self.push_str(".");
+                        self.push_str_space(&name);
+                        self.push_str_space("=");
+                    }
                     self.serialize_expression(expr);
                     self.pop_char();
                     self.push_str_space(",");
@@ -255,33 +267,41 @@ impl Serializer {
                 self.push_str(&" ".repeat(self.ident_level * 4));
                 self.push_str_newline("}");
             }
-            Statement::Def { declarators, .. } => {
-                let r#type = declarators.last().unwrap().0.clone();
-                self.serialize_type(r#type);
-                for (r#type, ident, init) in declarators {
-                    if r#type.get_pointer_flag() {
-                        self.push_str("*");
-                    }
-                    self.push_str_space(&ident);
-                    let (array_flag, array_len) = r#type.get_array();
-                    if array_flag {
-                        self.pop_char();
-                        self.push_str("[");
-                        if let Some(len) = array_len {
-                            self.push_str(&len.to_string());
+            Statement::Def {
+                base_type,
+                declarators,
+                ..
+            } => {
+                self.serialize_type(base_type.clone());
+                if declarators.is_empty() {
+                    self.pop_char();
+                    self.push_str_newline(";");
+                } else {
+                    for (r#type, ident, init) in declarators {
+                        if r#type.get_pointer_flag() {
+                            self.push_str("*");
                         }
-                        self.push_str_space("]");
-                    }
-                    if let Some(ex) = init {
-                        self.push_str_space("=");
-                        self.serialize_expression(ex);
+                        self.push_str_space(&ident);
+                        let (array_flag, array_len) = r#type.get_array();
+                        if array_flag {
+                            self.pop_char();
+                            self.push_str("[");
+                            if let Some(len) = array_len {
+                                self.push_str(&len.to_string());
+                            }
+                            self.push_str_space("]");
+                        }
+                        if let Some(ex) = init {
+                            self.push_str_space("=");
+                            self.serialize_expression(ex);
+                        }
+                        self.pop_char();
+                        self.push_str_space(",");
                     }
                     self.pop_char();
-                    self.push_str_space(",");
+                    self.pop_char();
+                    self.push_str_newline(";");
                 }
-                self.pop_char();
-                self.pop_char();
-                self.push_str_newline(";")
             }
             Statement::While {
                 condition, body, ..
@@ -498,6 +518,7 @@ void f(int a, unsigned int b) {}
                     int a;
                     float b;
                 } c1 = { 1, 2 };
+                struct D {};
 
                 return;
             }
@@ -556,6 +577,7 @@ void f(int a, unsigned int b) {}
         int a;
         float b;
     } c1 = { 1, 2 };
+    struct D {};
     return;
 }
 

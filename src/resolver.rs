@@ -1,19 +1,19 @@
-use crate::structure::{Error, Function};
+use crate::structure::{Error, StaticObject};
 
 pub struct Resolver<'a> {
-    generic_ast: Option<Vec<Function>>,
+    generic_ast: Option<Vec<StaticObject>>,
     errors: &'a mut Vec<Error>,
 }
 
 impl<'a> Resolver<'a> {
-    pub fn new(generic_ast: Vec<Function>, errors: &'a mut Vec<Error>) -> Resolver<'a> {
+    pub fn new(generic_ast: Vec<StaticObject>, errors: &'a mut Vec<Error>) -> Resolver<'a> {
         Resolver {
             generic_ast: Some(generic_ast),
             errors,
         }
     }
 
-    pub fn run(&mut self) -> Result<Vec<Function>, ()> {
+    pub fn run(&mut self) -> Result<Vec<StaticObject>, ()> {
         Ok(self.generic_ast.take().unwrap())
     }
 }

@@ -5,7 +5,8 @@ use std::collections::HashSet;
 use indexmap::IndexMap;
 
 use crate::structure::{
-    Array, Error, Expression, Function, Locate, Location, Pointer, Statement, Token, Type,
+    Array, Error, Expression, Function, Locate, Location, Pointer, Statement, StaticObject, Token,
+    Type,
 };
 
 /// A structure containg names defined in different scopes.
@@ -52,13 +53,23 @@ impl Environment {
 pub struct Parser<'a> {
     tokens: Vec<Token>,
     errors: &'a mut Vec<Error>,
-    generic_ast: Option<Vec<Function>>,
+    generic_ast: Option<Vec<StaticObject>>,
     environment: Environment,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(mut tokens: Vec<Token>, errors: &'a mut Vec<Error>) -> Parser<'a> {
-        tokens.reverse(); // We will use `Vector.pop()` and `Vector.last()` to get tokens.
+    pub fn new(tokens: Vec<Token>, errors: &'a mut Vec<Error>) -> Parser<'a> {
+        let tokens: Vec<_> = tokens
+            .into_iter()
+            .filter(|tk| {
+                if let Token::Comment { .. } = tk {
+                    false
+                } else {
+                    true
+                }
+            })
+            .rev()
+            .collect(); // We will use `Vector.pop()` and `Vector.last()` to get tokens.
         Parser {
             tokens,
             errors: errors,
@@ -67,13 +78,33 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn run(&mut self) -> Result<Vec<Function>, ()> {
-        while let Some(_) = self.tokens.last() {
-            match self.parse_function() {
-                Ok(func) => self.generic_ast.as_mut().unwrap().push(func),
-                Err(_) => self.tokens.clear(),
+    pub fn run(&mut self) -> Result<Vec<StaticObject>, ()> {
+        while let Some(tk) = self.tokens.last() {
+            match tk {
+                Token::Struct(_) => {
+                    let location = self.tokens.pop().unwrap().locate();
+                    match self.parse_type_struct(location) {
+                        Ok(r#struct) => {
+                            self.assert_token("Semicolon")?;
+                            self.generic_ast
+                                .as_mut()
+                                .unwrap()
+                                .push(StaticObject::Type(r#struct));
+                        }
+                        Err(_) => self.tokens.clear(),
+                    }
+                }
+                _ => match self.parse_function() {
+                    Ok(func) => self
+                        .generic_ast
+                        .as_mut()
+                        .unwrap()
+                        .push(StaticObject::Function(func)),
+                    Err(_) => self.tokens.clear(),
+                },
             }
         }
+
         if self.errors.is_empty() {
             Ok(self.generic_ast.take().unwrap())
         } else {
@@ -591,7 +622,7 @@ impl<'a> Parser<'a> {
             Some(Token::Semicolon(_)) => {
                 self.tokens.pop();
                 None
-            },
+            }
             _ => Some(Box::new(self.parse_statement()?)),
         };
         let condition = match self.tokens.last() {
@@ -721,6 +752,18 @@ impl<'a> Parser<'a> {
         let location = r#type.locate();
         let mut declarators = Vec::new();
         loop {
+            // Parse the delimiter.
+            match self.tokens.pop() {
+                Some(Token::Comma(_)) => {}
+                Some(Token::Semicolon(_)) => {
+                    break;
+                }
+                Some(tk) => self.tokens.push(tk),
+                None => {
+                    self.push_error("Unexpected EOF.", Location::default());
+                    return Err(());
+                }
+            }
             // Check for pointer types.
             let mut pointer_flag = false;
             if let Some(Token::Asterisk { .. }) = self.tokens.last() {
@@ -729,81 +772,56 @@ impl<'a> Parser<'a> {
             }
             match self.tokens.pop() {
                 Some(Token::Ident { literal, .. }) => {
-                    let r#type = r#type.set_pointer_flag(pointer_flag);
+                    let mut r#type = r#type.set_pointer_flag(pointer_flag);
                     self.environment.define(&literal);
-                    match self.tokens.last() {
-                        // Parse a plain variable or a pointer.
-                        Some(Token::Equal(_)) => {
-                            self.tokens.pop();
-                            let value = match self.tokens.last() {
-                                Some(Token::LBrace(_)) => self.parse_expression_init_list()?,
-                                _ => self.parse_expression(0)?,
-                            };
-                            declarators.push((r#type, literal, Some(value)));
-                        }
-                        // Parse an array.
-                        Some(Token::LBracket(_)) => {
-                            self.tokens.pop();
-                            let array_len = match self.tokens.last() {
-                                Some(Token::RBracket(_)) => None,
-                                _ => {
-                                    let expr = self
-                                        .parse_expression(0)
-                                        .map_err(|_| self.skip_to_semicolon())?;
-                                    match expr {
-                                        Expression::IntConst { value, .. } => Some(value as usize),
-                                        expr => {
-                                            self.push_error(
-                                                "Expect a integral literal.",
-                                                expr.locate(),
-                                            );
-                                            None
-                                        }
+                    // Check for array types.
+                    if let Some(Token::LBracket(_)) = self.tokens.last() {
+                        self.tokens.pop();
+                        let array_len = match self.tokens.last() {
+                            Some(Token::RBracket(_)) => None,
+                            _ => {
+                                let expr = self
+                                    .parse_expression(0)
+                                    .map_err(|_| self.skip_to_semicolon())?;
+                                match expr {
+                                    Expression::IntConst { value, .. } => Some(value as usize),
+                                    expr => {
+                                        self.push_error(
+                                            "Expect a integral literal.",
+                                            expr.locate(),
+                                        );
+                                        None
                                     }
                                 }
-                            };
-                            self.assert_token("RBracket")
-                                .map_err(|_| self.skip_to_semicolon())?;
-                            let typ = r#type.set_array(true, array_len);
-                            let init_list = match self.tokens.last() {
-                                Some(Token::Equal(_)) => {
-                                    self.tokens.pop();
-                                    Some(self.parse_expression_init_list()?)
-                                }
-                                _ => None,
-                            };
-                            declarators.push((typ, literal, init_list));
-                        }
-                        _ => declarators.push((r#type, literal, None)),
+                            }
+                        };
+                        self.assert_token("RBracket")
+                            .map_err(|_| self.skip_to_semicolon())?;
+                        r#type = r#type.set_array(true, array_len);
                     }
-                    // Parse the delimiter.
-                    match self.tokens.pop() {
-                        Some(Token::Comma(_)) => {}
-                        Some(Token::Semicolon(_)) => break,
-                        Some(tk) => {
-                            self.push_error("Expect `,` or `;`.", tk.locate());
-                            self.tokens.push(tk);
-                            return Err(());
-                        }
-                        None => {
-                            self.push_error("Unexpected EOF.", Location::default());
-                            return Err(());
-                        }
-                    }
+                    // Parse the initializer.
+                    let initializer = if let Some(Token::Equal(_)) = self.tokens.last() {
+                        self.tokens.pop();
+                        let value = match self.tokens.last() {
+                            Some(Token::LBrace(_)) => self.parse_expression_init_list()?,
+                            _ => self.parse_expression(0)?,
+                        };
+                        Some(value)
+                    } else {
+                        None
+                    };
+                    declarators.push((r#type, literal, initializer));
                 }
-                Some(Token::Semicolon(_)) => break,
                 Some(tk) => {
                     self.push_error("Expect a identifier.", tk.locate());
                     self.tokens.push(tk);
                     return Err(());
                 }
-                None => {
-                    self.push_error("Unexpected EOF.", Location::default());
-                    return Err(());
-                }
+                None => unreachable!(),
             }
         }
         Ok(Statement::Def {
+            base_type: r#type,
             declarators,
             location,
         })
@@ -832,6 +850,7 @@ impl<'a> Parser<'a> {
                         location: Location::default(),
                     };
                     Ok(Statement::Def {
+                        base_type: r#type.clone(),
                         declarators: vec![(r#type, value, Some(*right))],
                         location,
                     })
@@ -855,7 +874,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression_init_list(&mut self) -> Result<Expression, ()> {
-        let mut expressions = Vec::new();
+        let mut pairs = Vec::new();
         let location = self.assert_token("LBrace")?.locate();
         loop {
             match self.tokens.last() {
@@ -863,7 +882,30 @@ impl<'a> Parser<'a> {
                 Some(Token::Comma(_)) => {
                     self.tokens.pop();
                 }
-                Some(_) => expressions.push(self.parse_expression(0)?),
+                Some(Token::Dot(_)) => {
+                    let location = self.tokens.pop().unwrap().locate();
+                    match self.tokens.pop() {
+                        Some(Token::Ident { literal, .. }) => {
+                            if let Some(Token::Equal(_)) = self.tokens.last() {
+                                self.tokens.pop();
+                                pairs.push((Some(literal), self.parse_expression(0)?));
+                            } else {
+                                self.push_error("Expect `.member = expr`.", location);
+                                return Err(());
+                            }
+                        }
+                        Some(tk) => {
+                            self.tokens.push(tk);
+                            self.push_error("Expect `.member`.", location);
+                            return Err(());
+                        }
+                        None => {
+                            self.push_error("Unexpected EOF.", Location::default());
+                            return Err(());
+                        }
+                    }
+                }
+                Some(_) => pairs.push((None, self.parse_expression(0)?)),
                 None => {
                     self.push_error("Unexpected EOF.", Location::default());
                     return Err(());
@@ -872,10 +914,7 @@ impl<'a> Parser<'a> {
         }
         self.assert_token("RBrace")
             .map_err(|_| self.skip_to_semicolon())?;
-        Ok(Expression::InitList {
-            expressions,
-            location,
-        })
+        Ok(Expression::InitList { pairs, location })
     }
 
     fn parse_expression(&mut self, precedence: u8) -> Result<Expression, ()> {
@@ -950,7 +989,7 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expression(0)?;
                 self.assert_token("RParen")
                     .map_err(|_| self.skip_to_semicolon())?;
-                Ok(Expression::Group{
+                Ok(Expression::Group {
                     expression: Box::new(expr),
                     location,
                 })
@@ -1144,10 +1183,47 @@ mod tests {
     use crate::preprocessor::Preprocessor;
 
     #[test]
+    fn comment() {
+        let source = "/**/";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
+    fn r#struct() {
+        let source = "struct A {};";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Type(Type::Struct {
+            name: "A".to_string(),
+            members: IndexMap::new(),
+            array_flag: false,
+            array_len: None,
+            pointer_flag: false,
+            location: Location::default(),
+        })];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
     fn function_empty() {
         let source = "void f() {}";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1161,7 +1237,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1176,7 +1252,7 @@ mod tests {
     fn function_single() {
         let source = "void f(int a) {}";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1202,7 +1278,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1221,7 +1297,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
-            Function {
+            StaticObject::Function(Function {
                 r#type: Type::Void {
                     array_flag: false,
                     array_len: None,
@@ -1235,8 +1311,8 @@ mod tests {
                     location: Location::default(),
                 },
                 location: Location::default(),
-            },
-            Function {
+            }),
+            StaticObject::Function(Function {
                 r#type: Type::Void {
                     array_flag: false,
                     array_len: None,
@@ -1274,7 +1350,7 @@ mod tests {
                     location: Location::default(),
                 },
                 location: Location::default(),
-            },
+            }),
         ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
@@ -1292,7 +1368,7 @@ mod tests {
             void f() ;
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1303,7 +1379,7 @@ mod tests {
             parameters: IndexMap::new(),
             body: Statement::Null(Location::default()),
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1318,7 +1394,7 @@ mod tests {
     fn statement_continue() {
         let source = "void f() { continue; }";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1332,7 +1408,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1347,7 +1423,7 @@ mod tests {
     fn statement_break() {
         let source = "void f() { break; }";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1361,7 +1437,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1381,7 +1457,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1407,7 +1483,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1435,7 +1511,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1447,6 +1523,12 @@ mod tests {
             body: Statement::Block {
                 statements: vec![
                     Statement::Def {
+                        base_type: Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![
                             (
                                 Type::T {
@@ -1475,6 +1557,12 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Char {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Char {
                                 array_flag: true,
@@ -1488,6 +1576,13 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Short {
+                            signed_flag: true,
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Short {
                                 signed_flag: true,
@@ -1498,16 +1593,26 @@ mod tests {
                             },
                             "a".to_string(),
                             Some(Expression::InitList {
-                                expressions: vec![Expression::IntConst {
-                                    value: 1,
-                                    location: Location::default(),
-                                }],
+                                pairs: vec![(
+                                    None,
+                                    Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    },
+                                )],
                                 location: Location::default(),
                             }),
                         )],
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Short {
+                            signed_flag: false,
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Short {
                                 signed_flag: false,
@@ -1518,16 +1623,26 @@ mod tests {
                             },
                             "a".to_string(),
                             Some(Expression::InitList {
-                                expressions: vec![Expression::IntConst {
-                                    value: 1,
-                                    location: Location::default(),
-                                }],
+                                pairs: vec![(
+                                    None,
+                                    Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    },
+                                )],
                                 location: Location::default(),
                             }),
                         )],
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Int {
+                            signed_flag: true,
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Int {
                                 signed_flag: true,
@@ -1538,15 +1653,21 @@ mod tests {
                             },
                             "a".to_string(),
                             Some(Expression::InitList {
-                                expressions: vec![
-                                    Expression::IntConst {
-                                        value: 1,
-                                        location: Location::default(),
-                                    },
-                                    Expression::IntConst {
-                                        value: 2,
-                                        location: Location::default(),
-                                    },
+                                pairs: vec![
+                                    (
+                                        None,
+                                        Expression::IntConst {
+                                            value: 1,
+                                            location: Location::default(),
+                                        },
+                                    ),
+                                    (
+                                        None,
+                                        Expression::IntConst {
+                                            value: 2,
+                                            location: Location::default(),
+                                        },
+                                    ),
                                 ],
                                 location: Location::default(),
                             }),
@@ -1554,6 +1675,13 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Int {
+                            signed_flag: false,
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Int {
                                 signed_flag: false,
@@ -1568,6 +1696,13 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Long {
+                            signed_flag: true,
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Long {
                                 signed_flag: true,
@@ -1589,6 +1724,13 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Long {
+                            signed_flag: false,
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Long {
                                 signed_flag: false,
@@ -1610,6 +1752,12 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Float {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Float {
                                 array_flag: false,
@@ -1623,6 +1771,12 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Double {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Double {
                                 array_flag: false,
@@ -1642,7 +1796,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1664,11 +1818,12 @@ mod tests {
                 struct C {
                     int a;
                     float b;
-                } c = { 1, 2 };
+                } c = { 1, .b = 2 };
+                struct D {};
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1680,6 +1835,14 @@ mod tests {
             body: Statement::Block {
                 statements: vec![
                     Statement::Def {
+                        base_type: Type::Struct {
+                            name: "A".to_string(),
+                            members: IndexMap::new(),
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Struct {
                                 name: "A".to_string(),
@@ -1695,6 +1858,26 @@ mod tests {
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Struct {
+                            name: "B".to_string(),
+                            members: [(
+                                "a".to_string(),
+                                Type::Int {
+                                    signed_flag: true,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                },
+                            )]
+                            .iter()
+                            .cloned()
+                            .collect(),
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Struct {
                                 name: "B".to_string(),
@@ -1718,16 +1901,50 @@ mod tests {
                             },
                             "b".to_string(),
                             Some(Expression::InitList {
-                                expressions: vec![Expression::IntConst {
-                                    value: 1,
-                                    location: Location::default(),
-                                }],
+                                pairs: vec![(
+                                    None,
+                                    Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    },
+                                )],
                                 location: Location::default(),
                             }),
                         )],
                         location: Location::default(),
                     },
                     Statement::Def {
+                        base_type: Type::Struct {
+                            name: "C".to_string(),
+                            members: [
+                                (
+                                    "a".to_string(),
+                                    Type::Int {
+                                        signed_flag: true,
+                                        array_flag: false,
+                                        array_len: None,
+                                        pointer_flag: false,
+                                        location: Location::default(),
+                                    },
+                                ),
+                                (
+                                    "b".to_string(),
+                                    Type::Float {
+                                        array_flag: false,
+                                        array_len: None,
+                                        pointer_flag: false,
+                                        location: Location::default(),
+                                    },
+                                ),
+                            ]
+                            .iter()
+                            .cloned()
+                            .collect(),
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::Struct {
                                 name: "C".to_string(),
@@ -1762,26 +1979,44 @@ mod tests {
                             },
                             "c".to_string(),
                             Some(Expression::InitList {
-                                expressions: vec![
-                                    Expression::IntConst {
-                                        value: 1,
-                                        location: Location::default(),
-                                    },
-                                    Expression::IntConst {
-                                        value: 2,
-                                        location: Location::default(),
-                                    },
+                                pairs: vec![
+                                    (
+                                        None,
+                                        Expression::IntConst {
+                                            value: 1,
+                                            location: Location::default(),
+                                        },
+                                    ),
+                                    (
+                                        Some("b".to_string()),
+                                        Expression::IntConst {
+                                            value: 2,
+                                            location: Location::default(),
+                                        },
+                                    ),
                                 ],
                                 location: Location::default(),
                             }),
                         )],
                         location: Location::default(),
                     },
+                    Statement::Def {
+                        base_type: Type::Struct {
+                            name: "D".to_string(),
+                            members: IndexMap::new(),
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
+                        declarators: vec![],
+                        location: Location::default(),
+                    },
                 ],
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1800,7 +2035,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1821,7 +2056,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1840,7 +2075,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1861,7 +2096,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1882,7 +2117,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -1940,6 +2175,13 @@ mod tests {
                     },
                     Statement::For {
                         initialization: Some(Box::new(Statement::Def {
+                            base_type: Type::Int {
+                                signed_flag: true,
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                location: Location::default(),
+                            },
                             declarators: vec![(
                                 Type::Int {
                                     signed_flag: true,
@@ -1974,7 +2216,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1994,7 +2236,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2027,7 +2269,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2053,7 +2295,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2107,7 +2349,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2130,7 +2372,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2165,7 +2407,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2184,7 +2426,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2215,23 +2457,23 @@ mod tests {
                                 left: Box::new(Expression::Infix {
                                     left: Box::new(Expression::Group {
                                         expression: Box::new(Expression::Infix {
-                                        left: Box::new(Expression::Prefix {
-                                            operator: "--",
-                                            location: Location::default(),
-                                            expression: Box::new(Expression::IntConst {
-                                                value: 1,
+                                            left: Box::new(Expression::Prefix {
+                                                operator: "--",
                                                 location: Location::default(),
+                                                expression: Box::new(Expression::IntConst {
+                                                    value: 1,
+                                                    location: Location::default(),
+                                                }),
+                                            }),
+                                            operator: "-",
+                                            right: Box::new(Expression::Suffix {
+                                                operator: "++",
+                                                expression: Box::new(Expression::IntConst {
+                                                    value: 1,
+                                                    location: Location::default(),
+                                                }),
                                             }),
                                         }),
-                                        operator: "-",
-                                        right: Box::new(Expression::Suffix {
-                                            operator: "++",
-                                            expression: Box::new(Expression::IntConst {
-                                                value: 1,
-                                                location: Location::default(),
-                                            }),
-                                        }),
-                                    }),
                                         location: Location::default(),
                                     }),
                                     operator: "*",
@@ -2260,7 +2502,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2279,7 +2521,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2356,7 +2598,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2375,7 +2617,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2427,7 +2669,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2446,7 +2688,7 @@ mod tests {
             a + *a + &a + a->a;
         }";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::Void {
                 array_flag: false,
                 array_len: None,
@@ -2521,7 +2763,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2541,7 +2783,7 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![Function {
+        let expected_generic_ast = vec![StaticObject::Function(Function {
             r#type: Type::T {
                 array_flag: false,
                 array_len: None,
@@ -2575,6 +2817,12 @@ mod tests {
                         }),
                     }),
                     Statement::Def {
+                        base_type: Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        },
                         declarators: vec![(
                             Type::T {
                                 array_flag: false,
@@ -2594,7 +2842,7 @@ mod tests {
                 location: Location::default(),
             },
             location: Location::default(),
-        }];
+        })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
