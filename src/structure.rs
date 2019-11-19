@@ -1,7 +1,9 @@
 //! Basic structures which will be used among multiple modules.
 
+use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::fmt;
+use std::rc::Rc;
 
 use colored::*;
 use indexmap::IndexMap;
@@ -97,7 +99,7 @@ impl fmt::Display for Error {
 }
 
 /// Represent a specific location in the source file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, Hash)]
 pub struct Location {
     pub file_name: String,
     pub line_no: usize,
@@ -241,11 +243,14 @@ impl Locate for Token {
 /// AST nodes for type declarations.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
+    Any,
+    Nothing,
     T {
         array_flag: bool,
         array_len: Option<usize>,
         pointer_flag: bool,
         location: Location,
+        specialized: Option<Box<Type>>,
     },
     Void {
         array_flag: bool,
@@ -307,15 +312,19 @@ impl Array for Type {
         use Type::*;
 
         match self {
+            Any => unreachable!(),
+            Nothing => unreachable!(),
             T {
                 pointer_flag,
                 location,
+                specialized,
                 ..
             } => T {
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
                 location: location.clone(),
+                specialized: specialized.clone(),
             },
             Void {
                 pointer_flag,
@@ -414,6 +423,8 @@ impl Array for Type {
         use Type::*;
 
         match self {
+            Any => unreachable!(),
+            Nothing => unreachable!(),
             T {
                 array_flag,
                 array_len,
@@ -468,16 +479,20 @@ impl Pointer for Type {
         use Type::*;
 
         match self.clone() {
+            Any => unreachable!(),
+            Nothing => unreachable!(),
             T {
                 array_flag,
                 array_len,
                 location,
+                specialized,
                 ..
             } => T {
                 array_flag,
                 array_len,
                 pointer_flag,
                 location,
+                specialized,
             },
             Void {
                 array_flag,
@@ -584,6 +599,8 @@ impl Pointer for Type {
         use Type::*;
 
         match self {
+            Any => unreachable!(),
+            Nothing => unreachable!(),
             T { pointer_flag, .. } => *pointer_flag,
             Void { pointer_flag, .. } => *pointer_flag,
             Char { pointer_flag, .. } => *pointer_flag,
@@ -602,6 +619,8 @@ impl Locate for Type {
         use Type::*;
 
         match self {
+            Any => unreachable!(),
+            Nothing => unreachable!(),
             T { location, .. }
             | Void { location, .. }
             | Char { location, .. }
@@ -620,6 +639,8 @@ impl fmt::Display for Type {
         use Type::*;
 
         match self {
+            Any { .. } => write!(f, "Any"),
+            Nothing { .. } => write!(f, "Nothing"),
             T { .. } => write!(f, "T"),
             Void { .. } => write!(f, "void"),
             Char { .. } => write!(f, "char"),
@@ -634,61 +655,161 @@ impl fmt::Display for Type {
 }
 
 impl Type {
-    /// Constructor for dummy `Type` objects in the resolver.
-    pub fn make_dummy(name: &str, signed_flag: bool, array_flag: bool, pointer_flag: bool) -> Type {
-        use Type::*;
+    pub fn set_specialized(&mut self, r#type: Type) {
+        match self {
+            Type::T { specialized, .. } => {
+                specialized.replace(Box::new(r#type));
+            }
+            _ => {
+                panic!("Try to specialize a concrete type.");
+            }
+        }
+    }
 
-        match name {
-            "T" => Type::T {
-                array_flag,
-                array_len: None,
-                pointer_flag,
-                location: Location::default(),
+    pub fn compare_types(left: &Type, right: &Type) -> TypeRelationship {
+        use Type::*;
+        use TypeRelationship::*;
+        if let (Any, Any) = (left, right) {
+            return Equal;
+        }
+        if let (Nothing, Nothing) = (left, right) {
+            return Equal;
+        }
+        if let (Any, _) = (left, right) {
+            return Base;
+        }
+        if let (_, Any) = (left, right) {
+            return Sub;
+        }
+        if let (Nothing, _) = (left, right) {
+            return Sub;
+        }
+        if let (_, Nothing) = (left, right) {
+            return Base;
+        }
+        if let (Void { .. }, Void { .. }) = (left, right) {
+            return Equal;
+        }
+        // For other types, they must both or neither be arrays/pointers.
+        if left.get_array() != right.get_array()
+            || left.get_pointer_flag() != right.get_pointer_flag()
+        {
+            return None;
+        }
+        if let (
+            Struct {
+                name: left_name, ..
             },
-            "Char" => Type::Char {
-                array_flag,
-                array_len: None,
-                pointer_flag,
-                location: Location::default(),
+            Struct {
+                name: right_name, ..
             },
-            "Short" => Short {
-                signed_flag,
-                array_flag,
-                array_len: None,
-                pointer_flag,
-                location: Location::default(),
+        ) = (left, right)
+        {
+            if left_name == right_name {
+                return Equal;
+            } else {
+                return None;
+            }
+        }
+        // Allow safe type coercion.
+        match left {
+            Char { .. } => match right {
+                Char { .. } => Equal,
+                _ => None,
             },
-            "Int" => Int {
-                signed_flag,
-                array_flag,
-                array_len: None,
-                pointer_flag,
-                location: Location::default(),
+            Short {
+                signed_flag: true, ..
+            } => match right {
+                Char { .. } => Base,
+                Short {
+                    signed_flag: true, ..
+                } => Equal,
+                Short {
+                    signed_flag: false, ..
+                } => None,
+                _ => Sub,
             },
-            "Long" => Long {
-                signed_flag,
-                array_flag,
-                array_len: None,
-                pointer_flag,
-                location: Location::default(),
+            Short {
+                signed_flag: false, ..
+            } => match right {
+                Char { .. } => Base,
+                Short {
+                    signed_flag: false, ..
+                } => Equal,
+                Short {
+                    signed_flag: true, ..
+                } => None,
+                _ => Sub,
             },
-            "Float" => Float {
-                array_flag,
-                array_len: None,
-                pointer_flag,
-                location: Location::default(),
+            Int {
+                signed_flag: true, ..
+            } => match right {
+                Char { .. } | Short { .. } => Base,
+                Int {
+                    signed_flag: true, ..
+                } => Equal,
+                Int {
+                    signed_flag: false, ..
+                } => None,
+                _ => Sub,
             },
-            "Double" => Double {
-                array_flag,
-                array_len: None,
-                pointer_flag,
-                location: Location::default(),
+            Int {
+                signed_flag: false, ..
+            } => match right {
+                Char { .. } | Short { .. } => Base,
+                Int {
+                    signed_flag: false, ..
+                } => Equal,
+                Int {
+                    signed_flag: true, ..
+                } => None,
+                _ => Sub,
             },
-            _ => unreachable!(),
+            Long {
+                signed_flag: true, ..
+            } => match right {
+                Char { .. } | Short { .. } | Int { .. } => Base,
+                Long {
+                    signed_flag: true, ..
+                } => Equal,
+                Long {
+                    signed_flag: false, ..
+                } => None,
+                _ => Sub,
+            },
+            Long {
+                signed_flag: false, ..
+            } => match right {
+                Char { .. } | Short { .. } | Int { .. } => Base,
+                Long {
+                    signed_flag: false, ..
+                } => Equal,
+                Long {
+                    signed_flag: true, ..
+                } => None,
+                _ => Sub,
+            },
+            Float { .. } => match right {
+                Double { .. } => Sub,
+                Float { .. } => Equal,
+                _ => Base,
+            },
+            Double { .. } => match right {
+                Double { .. } => Equal,
+                _ => Base,
+            },
+            _ => None,
         }
     }
 }
 
+#[derive(Debug)]
+pub enum TypeRelationship {
+    Sub,
+    Equal,
+    Base,
+    None,
+}
 /// AST nodes for expressions.
 #[derive(Debug, PartialEq)]
 pub enum Expression {
@@ -781,8 +902,8 @@ pub enum Statement {
         location: Location,
     },
     Def {
-        base_type: Type,
-        declarators: Vec<(Type, String, Option<Expression>)>,
+        base_type: Rc<RefCell<Type>>,
+        declarators: Vec<(Rc<RefCell<Type>>, String, Option<Expression>)>,
         location: Location,
     },
     While {
@@ -838,9 +959,9 @@ impl Locate for Statement {
 /// AST nodes for functions.
 #[derive(Debug, PartialEq)]
 pub struct Function {
-    pub r#type: Type,
+    pub return_type: Rc<RefCell<Type>>,
     pub name: String,
-    pub parameters: IndexMap<String, Type>,
+    pub parameters: IndexMap<String, Rc<RefCell<Type>>>,
     pub body: Statement,
     pub location: Location,
 }
