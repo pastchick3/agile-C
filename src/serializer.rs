@@ -87,6 +87,8 @@ impl Serializer {
         match r#type {
             Type::Any { .. } => unreachable!(),
             Type::Nothing { .. } => unreachable!(),
+            Type::AnyRef { .. } => unreachable!(),
+            Type::Null { .. } => unreachable!(),
             Type::T { specialized, .. } => {
                 if let Some(type_) = specialized {
                     self.serialize_type(*type_);
@@ -267,25 +269,29 @@ impl Serializer {
                 None => self.push_str_newline("return;"),
             },
             Statement::Block { statements, .. } => {
-                self.push_str_newline("{");
-                self.ident_level += 1;
                 if statements.is_empty() {
-                    self.pop_char();
+                    self.push_str_newline("{}");
                 } else {
+                    self.push_str_newline("{");
+                    self.ident_level += 1;
                     for stmt in statements {
                         self.serialize_statement(stmt);
                     }
+                    self.ident_level -= 1;
+                    self.push_str(&" ".repeat(self.ident_level * 4));
+                    self.push_str_newline("}");
                 }
-                self.ident_level -= 1;
-                self.push_str(&" ".repeat(self.ident_level * 4));
-                self.push_str_newline("}");
             }
             Statement::Def {
                 base_type,
                 declarators,
                 ..
             } => {
-                self.serialize_type(Rc::try_unwrap(base_type).unwrap().into_inner());
+                let type_ = match declarators.last() {
+                    Some((type_, _, _)) => type_.borrow().clone(),
+                    None => Rc::try_unwrap(base_type).unwrap().into_inner(),
+                };
+                self.serialize_type(type_);
                 if declarators.is_empty() {
                     self.pop_char();
                     self.push_str_newline(";");
@@ -400,6 +406,10 @@ impl Serializer {
                 self.serialize_expression(expression);
                 self.pop_char();
                 self.push_str_space(")");
+                if branches.is_empty() && default.is_none() {
+                    self.push_str_newline("{}");
+                    return;
+                }
                 self.push_str_newline("{");
                 self.ident_level += 1;
                 for (label, stmts) in branches {
@@ -645,7 +655,7 @@ int f(int a) {
         let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
         let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
         let transformed_source = Serializer::new(ast).run();
-        // assert!(errors.is_empty());
-        // assert_eq!(&transformed_source, expected_transformed_source);
+        assert!(errors.is_empty());
+        assert_eq!(&transformed_source, expected_transformed_source);
     }
 }

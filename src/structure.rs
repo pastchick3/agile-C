@@ -245,6 +245,8 @@ impl Locate for Token {
 pub enum Type {
     Any,
     Nothing,
+    AnyRef,
+    Null,
     T {
         array_flag: bool,
         array_len: Option<usize>,
@@ -314,6 +316,8 @@ impl Array for Type {
         match self {
             Any => unreachable!(),
             Nothing => unreachable!(),
+            AnyRef => unreachable!(),
+            Null => unreachable!(),
             T {
                 pointer_flag,
                 location,
@@ -425,6 +429,8 @@ impl Array for Type {
         match self {
             Any => unreachable!(),
             Nothing => unreachable!(),
+            AnyRef => unreachable!(),
+            Null => unreachable!(),
             T {
                 array_flag,
                 array_len,
@@ -481,6 +487,8 @@ impl Pointer for Type {
         match self.clone() {
             Any => unreachable!(),
             Nothing => unreachable!(),
+            AnyRef => unreachable!(),
+            Null => unreachable!(),
             T {
                 array_flag,
                 array_len,
@@ -601,6 +609,8 @@ impl Pointer for Type {
         match self {
             Any => unreachable!(),
             Nothing => unreachable!(),
+            AnyRef => unreachable!(),
+            Null => unreachable!(),
             T { pointer_flag, .. } => *pointer_flag,
             Void { pointer_flag, .. } => *pointer_flag,
             Char { pointer_flag, .. } => *pointer_flag,
@@ -619,8 +629,7 @@ impl Locate for Type {
         use Type::*;
 
         match self {
-            Any => unreachable!(),
-            Nothing => unreachable!(),
+            Any | Nothing | AnyRef | Null => Location::default(),
             T { location, .. }
             | Void { location, .. }
             | Char { location, .. }
@@ -641,6 +650,8 @@ impl fmt::Display for Type {
         match self {
             Any { .. } => write!(f, "Any"),
             Nothing { .. } => write!(f, "Nothing"),
+            AnyRef { .. } => write!(f, "AnyRef"),
+            Null { .. } => write!(f, "Null"),
             T { .. } => write!(f, "T"),
             Void { .. } => write!(f, "void"),
             Char { .. } => write!(f, "char"),
@@ -696,6 +707,24 @@ impl Type {
         {
             return None;
         }
+        if let (AnyRef, AnyRef) = (left, right) {
+            return Equal;
+        }
+        if let (Null, Null) = (left, right) {
+            return Equal;
+        }
+        if let (AnyRef, _) = (left, right) {
+            return Base;
+        }
+        if let (_, AnyRef) = (left, right) {
+            return Sub;
+        }
+        if let (Null, _) = (left, right) {
+            return Sub;
+        }
+        if let (_, Null) = (left, right) {
+            return Base;
+        }
         if let (
             Struct {
                 name: left_name, ..
@@ -715,7 +744,7 @@ impl Type {
         match left {
             Char { .. } => match right {
                 Char { .. } => Equal,
-                _ => None,
+                _ => Sub,
             },
             Short {
                 signed_flag: true, ..
@@ -799,6 +828,61 @@ impl Type {
                 _ => Base,
             },
             _ => None,
+        }
+    }
+
+    pub fn instantiate_any_nothing(left: Type, right: Type) -> Result<(Type, Type), ()> {
+        use Type::*;
+
+        match (&left, &right) {
+            (Any, _) | (Nothing, _) | (_, Any) | (_, Nothing) => (),
+            _ => return Ok((left, right)),
+        }
+
+        match &left {
+            Any => match &right {
+                Any
+                | Nothing
+                | T {
+                    specialized: None, ..
+                } => Err(()),
+                T {
+                    specialized: Some(type_),
+                    ..
+                } => Self::instantiate_any_nothing(left, *type_.clone()),
+                Void { .. } | Struct { .. } => Ok((right.clone(), right)),
+                _ => Ok((
+                    Double {
+                        array_flag: false,
+                        array_len: None,
+                        pointer_flag: false,
+                        location: Location::default(),
+                    },
+                    right,
+                )),
+            },
+            Nothing => match &right {
+                Any
+                | Nothing
+                | T {
+                    specialized: None, ..
+                } => Err(()),
+                T {
+                    specialized: Some(type_),
+                    ..
+                } => Self::instantiate_any_nothing(left, *type_.clone()),
+                Void { .. } | Struct { .. } => Ok((right.clone(), right)),
+                _ => Ok((
+                    Char {
+                        array_flag: false,
+                        array_len: None,
+                        pointer_flag: false,
+                        location: Location::default(),
+                    },
+                    right,
+                )),
+            },
+            _ => Self::instantiate_any_nothing(right, left).map(|(a, b)| (b, a)),
         }
     }
 }

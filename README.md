@@ -176,6 +176,13 @@ After that, these primary expressions will be combined into all other expression
 
 ## TODO
 
+def consistancy
+return pointer
+call function pointer
+
+lost env when final resolve return/param types
+init list for arrays/structures
+
 char? Num
 Bool? Num + ptr -> Bool -> T > char
 Array? const
