@@ -178,10 +178,10 @@ After that, these primary expressions will be combined into all other expression
 
 def consistancy
 return pointer
-call function pointer
+call function pointer (not allow)
 
 lost env when final resolve return/param types
-init list for arrays/structures
+init list for arrays/structures (no nest)
 
 char? Num
 Bool? Num + ptr -> Bool -> T > char

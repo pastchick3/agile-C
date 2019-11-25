@@ -11,10 +11,35 @@ use crate::structure::{
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 enum Symbol {
-    Variable { name: String, param_flag: bool },
-    Expression(String),
-    Parameter { function: String, name: String },
-    Return(String),
+    Variable {
+        scope: Option<usize>,
+        function: String,
+        name: String,
+    },
+    Expression {
+        scope: Option<usize>,
+        count: usize,
+    },
+    Parameter {
+        scope: Option<usize>,
+        function: String,
+        name: String,
+    },
+    Return {
+        scope: Option<usize>,
+        function: String,
+    },
+}
+
+impl Symbol {
+    fn get_scope(&self) -> Option<usize> {
+        match self {
+            Symbol::Variable { scope, .. } => scope.clone(),
+            Symbol::Expression { scope, .. } => scope.clone(),
+            Symbol::Parameter { scope, .. } => scope.clone(),
+            Symbol::Return { scope, .. } => scope.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -112,37 +137,76 @@ impl TypeBound {
 }
 
 #[derive(Debug)]
+struct Scope {
+    index: usize,
+    outer: Option<usize>,
+    symbols: HashMap<Symbol, TypeBound>,
+    expr_counter: usize,
+    structures: Vec<Type>,
+}
+
+impl Scope {
+    fn new(index: usize, outer: Option<usize>) -> Scope {
+        Scope {
+            index,
+            outer,
+            symbols: HashMap::new(),
+            expr_counter: 0,
+            structures: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct SymbolTable {
     current_func: Option<String>,
+    current_scope: Option<usize>,
     func_returns: HashMap<String, TypeBound>,
     func_params: HashMap<String, IndexMap<String, TypeBound>>,
-    structures: Vec<Vec<Type>>,
-    symbols: Vec<HashMap<Symbol, TypeBound>>,
-    expr_counter: Vec<usize>,
+    scopes: Vec<Scope>,
 }
 
 impl SymbolTable {
     fn new() -> SymbolTable {
         SymbolTable {
             current_func: None,
+            current_scope: None,
             func_returns: HashMap::new(),
             func_params: HashMap::new(),
-            structures: Vec::new(),
-            symbols: Vec::new(),
-            expr_counter: Vec::new(),
+            scopes: Vec::new(),
         }
     }
 
+    fn get_current_scope(&self) -> Option<&Scope> {
+        let current = self.current_scope?;
+        self.scopes.get(current)
+    }
+
+    fn get_scope(&self, index: Option<usize>) -> Option<&Scope> {
+        self.scopes.get(index?)
+    }
+
+    fn get_current_scope_mut(&mut self) -> Option<&mut Scope> {
+        let current = self.current_scope?;
+        self.scopes.get_mut(current)
+    }
+
+    fn get_scope_mut(&mut self, index: Option<usize>) -> Option<&mut Scope> {
+        self.scopes.get_mut(index?)
+    }
+
     fn enter_scope(&mut self) {
-        self.structures.push(Vec::new());
-        self.symbols.push(HashMap::new());
-        self.expr_counter.push(0);
+        let outer = self.current_scope.clone();
+        let current = self.scopes.len();
+        self.current_scope = Some(current);
+        self.scopes.push(Scope::new(current, outer));
     }
 
     fn leave_scope(&mut self) {
-        self.structures.pop();
-        self.symbols.pop();
-        self.expr_counter.pop();
+        self.current_scope = self
+            .get_current_scope()
+            .expect("Try to leave the global scope.")
+            .outer;
     }
 
     fn is_parameter(&self, name: &str) -> bool {
@@ -154,9 +218,13 @@ impl SymbolTable {
     }
 
     fn make_expression_symbol(&mut self) -> Symbol {
-        let expr_count = self.expr_counter.pop().unwrap();
-        let symbol = Symbol::Expression(expr_count.to_string());
-        self.expr_counter.push(expr_count + 1);
+        let current_scope = self.current_scope.expect("No scope");
+        let scope = self.get_current_scope_mut().expect("No scope");
+        let symbol = Symbol::Expression {
+            scope: Some(current_scope),
+            count: scope.expr_counter,
+        };
+        scope.expr_counter += 1;
         symbol
     }
 
@@ -177,29 +245,36 @@ impl SymbolTable {
     }
 
     fn define_symbol(&mut self, symbol: Symbol, type_bound: TypeBound) {
-        self.symbols.last_mut().unwrap().insert(symbol, type_bound);
+        let scope = self.get_current_scope_mut().expect("No scope");
+        scope.symbols.insert(symbol, type_bound);
     }
 
     fn define_structure(&mut self, structure: &Type) {
+        let scope = self.get_current_scope_mut().expect("No scope");
         if let Type::Struct { .. } = structure {
-            self.structures.last_mut().unwrap().push(structure.clone());
+            scope.structures.push(structure.clone());
         }
     }
 
     fn get_type_bound(&mut self, symbol: &Symbol) -> Option<TypeBound> {
-        self.symbols
-            .iter()
-            .rev()
-            .find_map(|symbols| symbols.get(symbol).cloned())
+        if let Some(scope) = self.get_scope(symbol.get_scope()) {
+            scope.symbols.get(symbol).cloned()
+        } else {
+            let mut scope = self.get_current_scope().expect("???");
+            loop {
+                if scope.symbols.contains_key(symbol) {
+                    break scope.symbols.get(symbol).cloned();
+                } else {
+                    scope = self.get_scope(scope.outer)?;
+                }
+            }
+        }
     }
 
     fn update_type_bound(&mut self, symbol: Symbol, type_bound: TypeBound) {
-        self.symbols
-            .iter_mut()
-            .rev()
-            .find(|symbols| symbols.contains_key(&symbol))
-            .unwrap()
-            .insert(symbol, type_bound);
+        let index = symbol.get_scope();
+        let scope = self.get_scope_mut(index).expect("No scope.");
+        scope.symbols.insert(symbol, type_bound);
     }
 }
 
@@ -230,9 +305,8 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        self.resolve_symbols();
         self.symbol_table.leave_scope();
-        // check all functions (return/param) are resolved.
+        self.resolve_symbols();
         if self.errors.is_empty() {
             Ok(ast)
         } else {
@@ -248,34 +322,57 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_symbols(&mut self) {
-        let mut symbols = self.symbol_table.symbols.last().unwrap().clone();
-        let mut modified = true;
-        while modified {
-            modified = false;
-            for (symbol, type_bound) in symbols.iter_mut() {
-                self.resolve_type_bound(symbol, type_bound, &mut modified, false);
-            }
-        }
-        modified = true;
-        while modified {
-            modified = false;
-            for (symbol, type_bound) in symbols.iter_mut() {
-                self.resolve_type_bound(symbol, type_bound, &mut modified, true);
-            }
-        }
-        for (symbol, type_bound) in symbols.into_iter() {
-            match symbol {
-                Symbol::Parameter{function, name} => {
-                    let old_type_bound = self.symbol_table.func_params.get(&function).unwrap().get(&name).unwrap();
-                    let type_bound = TypeBound::merge(old_type_bound, &type_bound);
-                    self.symbol_table.func_params.get_mut(&function).unwrap().insert(name, type_bound);
+        let mut symbols_vec: Vec<_> = self
+            .symbol_table
+            .scopes
+            .iter()
+            .map(|scope| scope.symbols.clone())
+            .collect();
+        for symbols in symbols_vec.iter_mut() {
+            let mut modified = true;
+            while modified {
+                modified = false;
+                for (symbol, type_bound) in symbols.iter_mut() {
+                    self.resolve_type_bound(symbol, type_bound, &mut modified, false);
                 }
-                Symbol::Return(func) => {
-                    let old_type_bound = self.symbol_table.func_returns.get(&func).unwrap();
-                    let type_bound = TypeBound::merge(old_type_bound, &type_bound);
-                    self.symbol_table.func_returns.insert(func, type_bound);
+            }
+            modified = true;
+            while modified {
+                modified = false;
+                for (symbol, type_bound) in symbols.iter_mut() {
+                    self.resolve_type_bound(symbol, type_bound, &mut modified, true);
                 }
-                _ => ()
+            }
+            for (symbol, type_bound) in symbols.iter() {
+                match symbol {
+                    Symbol::Parameter { function, name, .. } => {
+                        let old_type_bound = self
+                            .symbol_table
+                            .func_params
+                            .get(function)
+                            .unwrap()
+                            .get(name)
+                            .unwrap();
+                        let type_bound = TypeBound::merge(old_type_bound, type_bound);
+                        self.symbol_table
+                            .update_type_bound(symbol.clone(), type_bound.clone());
+                        self.symbol_table
+                            .func_params
+                            .get_mut(function)
+                            .unwrap()
+                            .insert(name.to_string(), type_bound.clone());
+                    }
+                    Symbol::Return { function, .. } => {
+                        let old_type_bound = self.symbol_table.func_returns.get(function).unwrap();
+                        let type_bound = TypeBound::merge(old_type_bound, type_bound);
+                        self.symbol_table
+                            .update_type_bound(symbol.clone(), type_bound.clone());
+                        self.symbol_table
+                            .func_returns
+                            .insert(function.to_string(), type_bound.clone());
+                    }
+                    _ => (),
+                }
             }
         }
     }
@@ -330,7 +427,6 @@ impl<'a> Resolver<'a> {
                     .unwrap()
                     .bounded
                     .clone(),
-                    
             };
             match type_ {
                 None => {
@@ -453,18 +549,22 @@ impl<'a> Resolver<'a> {
         self.symbol_table.current_func = Some(name.clone());
         self.symbol_table.enter_scope();
         for (name, type_) in parameters {
-            let symbol = Symbol::Variable {
+            let symbol = Symbol::Parameter {
+                function: self.symbol_table.current_func.clone().unwrap(),
+                scope: self.symbol_table.current_scope,
                 name: name.clone(),
-                param_flag: true,
             };
             let type_bound = TypeBound::new(Rc::clone(type_));
             self.symbol_table.define_symbol(symbol, type_bound);
         }
-        let symbol = Symbol::Return(name.clone());
+        let symbol = Symbol::Return {
+            scope: self.symbol_table.current_scope,
+            function: name.clone(),
+        };
         let type_bound = TypeBound::new(Rc::clone(return_type));
         self.symbol_table.define_symbol(symbol, type_bound);
         self.resolve_statement(body);
-        self.resolve_symbols();
+        // self.resolve_symbols();
         self.symbol_table.leave_scope();
         self.symbol_table.current_func = None;
     }
@@ -514,7 +614,10 @@ impl<'a> Resolver<'a> {
 
     fn resolve_statement_return(&mut self, expression: &Option<Expression>) {
         let current_func = self.symbol_table.current_func.as_ref().unwrap().to_string();
-        let return_symbol = Symbol::Return(current_func.clone());
+        let return_symbol = Symbol::Return {
+            scope: self.symbol_table.current_scope,
+            function: current_func.clone(),
+        };
         let mut return_type_bound = self.symbol_table.get_type_bound(&return_symbol).unwrap();
         match expression {
             Some(expr) => {
@@ -555,23 +658,87 @@ impl<'a> Resolver<'a> {
         base_type: &Rc<RefCell<Type>>,
         declarators: &Vec<(Rc<RefCell<Type>>, String, Option<Expression>)>,
     ) {
-        if let Type::Struct { .. } = base_type.borrow().clone() {
+        let mut struct_flag = false;
+        let struct_members = if let Type::Struct { members, .. } = base_type.borrow().clone() {
             self.symbol_table
                 .define_structure(&base_type.borrow().clone());
-        }
+            struct_flag = true;
+            Some(members.clone())
+        } else {
+            None
+        };
         for (type_, name, init) in declarators {
+            let array_flag = type_.borrow().get_array().0;
             let symbol = Symbol::Variable {
+                function: self.symbol_table.current_func.clone().unwrap(),
+                scope: self.symbol_table.current_scope,
                 name: name.clone(),
-                param_flag: false,
             };
             let mut type_bound = TypeBound::new(Rc::clone(type_));
             if let Some(expr) = init {
-                if let Ok((expr_symbol, mut expr_type_bound)) = self.resolve_expression(expr) {
-                    let bound = Bound::Symbol(expr_symbol.clone());
-                    type_bound.lower.push(bound);
-                    expr_type_bound.upper.push(Bound::Symbol(symbol.clone()));
-                    self.symbol_table
-                        .update_type_bound(expr_symbol, expr_type_bound);
+                if let Expression::InitList { pairs, .. } = expr {
+                    if !struct_flag && !array_flag {
+                        let message = "Unexpect InitList.";
+                        self.push_error(&message, &type_.borrow().locate());
+                        return;
+                    }
+                    let pairs = self.resolve_expression_initlist(pairs);
+                    if struct_flag {
+                        for (name, expr) in pairs {
+                            if name.is_none() {
+                                let message = "Unnamed field in InitList.";
+                                self.push_error(&message, &type_.borrow().locate());
+                                return;
+                            }
+                            let name = name.unwrap();
+                            if expr.is_err() {
+                                return;
+                            }
+                            let (expr_symbol, mut expr_type_bound) = expr.unwrap();
+                            match struct_members.as_ref().unwrap().get(&name) {
+                                Some(type_) => {
+                                    expr_type_bound.upper.push(Bound::Type(type_.clone()))
+                                }
+                                None => {
+                                    let message = "Unknown field in InitList.";
+                                    self.push_error(&message, &type_.borrow().locate());
+                                    return;
+                                }
+                            }
+                            self.symbol_table
+                                .update_type_bound(expr_symbol, expr_type_bound);
+                        }
+                    } else {
+                        for (name, expr) in pairs {
+                            if name.is_some() {
+                                let message = "No field in InitList of array.";
+                                self.push_error(&message, &type_.borrow().locate());
+                                return;
+                            }
+                            if expr.is_err() {
+                                return;
+                            }
+                            let (expr_symbol, mut expr_type_bound) = expr.unwrap();
+                            expr_type_bound
+                                .upper
+                                .push(Bound::Type(base_type.borrow().clone()));
+                            self.symbol_table
+                                .update_type_bound(expr_symbol, expr_type_bound);
+                        }
+                    }
+                } else {
+                    if struct_flag || array_flag {
+                        let message = "Expect InitList.";
+                        self.push_error(&message, &type_.borrow().locate());
+                        return;
+                    }
+                    if let Ok((expr_symbol, mut expr_type_bound)) = self.resolve_expression(expr) {
+                        let bound = Bound::Symbol(expr_symbol.clone());
+                        type_bound.lower.push(bound);
+                        expr_type_bound.upper.push(Bound::Symbol(symbol.clone()));
+                        self.symbol_table
+                            .update_type_bound(expr_symbol, expr_type_bound);
+                    }
                 }
             };
             self.symbol_table.define_symbol(symbol, type_bound);
@@ -680,7 +847,7 @@ impl<'a> Resolver<'a> {
                 expression,
                 arguments,
             } => self.resolve_expression_call(expression, arguments),
-            Expression::InitList { pairs, .. } => self.resolve_expression_initlist(pairs),
+            Expression::InitList { .. } => panic!("Direct call to InitList."),
         }
     }
 
@@ -689,9 +856,18 @@ impl<'a> Resolver<'a> {
         value: &str,
         location: &Location,
     ) -> Result<(Symbol, TypeBound), ()> {
-        let symbol = Symbol::Variable {
-            name: value.to_string(),
-            param_flag: self.symbol_table.is_parameter(value),
+        let symbol = if self.symbol_table.is_parameter(value) {
+            Symbol::Parameter {
+                function: self.symbol_table.current_func.clone().unwrap(),
+                scope: self.symbol_table.current_scope,
+                name: value.to_string(),
+            }
+        } else {
+            Symbol::Variable {
+                function: self.symbol_table.current_func.clone().unwrap(),
+                scope: self.symbol_table.current_scope,
+                name: value.to_string(),
+            }
         };
         self.symbol_table
             .get_type_bound(&symbol)
@@ -1003,6 +1179,7 @@ impl<'a> Resolver<'a> {
             for (arg, (name, param_type_bound)) in arguments.iter().zip(params.iter()) {
                 let (arg_symbol, mut arg_type_bound) = self.resolve_expression(arg)?;
                 let param_symbol = Symbol::Parameter {
+                    scope: self.symbol_table.current_scope,
                     function: value.to_string(),
                     name: name.to_string(),
                 };
@@ -1031,7 +1208,10 @@ impl<'a> Resolver<'a> {
     fn resolve_expression_initlist(
         &mut self,
         pairs: &Vec<(Option<String>, Expression)>,
-    ) -> Result<(Symbol, TypeBound), ()> {
-        unimplemented!()
+    ) -> Vec<(Option<String>, Result<(Symbol, TypeBound), ()>)> {
+        pairs
+            .iter()
+            .map(|(name, expr)| (name.clone(), self.resolve_expression(expr)))
+            .collect()
     }
 }
