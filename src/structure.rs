@@ -666,6 +666,15 @@ impl fmt::Display for Type {
 }
 
 impl Type {
+    pub fn specialized(&mut self) -> bool {
+        match self {
+            Type::T {
+                specialized: None, ..
+            } => false,
+            _ => true,
+        }
+    }
+
     pub fn set_specialized(&mut self, r#type: Type) {
         match self {
             Type::T { specialized, .. } => {
