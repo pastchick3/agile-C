@@ -495,6 +495,10 @@ void f(int a, unsigned int b) {}
     #[test]
     fn expression() {
         let source = "
+            struct S {
+                int mem;
+            };
+            
             void f(int a) {
                 a;
                 1;
@@ -502,23 +506,33 @@ void f(int a, unsigned int b) {}
                 '1';
                 \"1\";
                 +1 + (a++);
-                \"1\"[0];
+                int arr[] = { 1 };
+                arr[0];
                 f(1);
-                a.b;
-                c->d;
+                struct S var, *ptr;
+                var.mem;
+                ptr->mem;
             }
         ";
-        let expected_transformed_source = "void f(int a) {
+        let expected_transformed_source = "struct S {
+    int mem;
+};
+
+void f(int a) {
     a;
     1;
     1.1;
     '1';
     \"1\";
     +1 + (a++);
-    \"1\"[0];
+    int arr[] = { 1 };
+    arr[0];
     f(1);
-    a.b;
-    c->d;
+    struct S {
+        int mem;
+    } var, *ptr;
+    var.mem;
+    ptr->mem;
 }
 ";
         let mut errors = Vec::new();
@@ -540,60 +554,59 @@ void f(int a, unsigned int b) {}
                 {
                     ;
                 }
-
-                T a = 1, a;
+            
                 char a[1];
-                short a[] = { 1 };
-                unsigned short a[1] = { 1 };
-                int a[2] = { 1, 2 };
-                unsigned int *a;
-                long *a = &a;
-                unsigned long a = *a;
-                float a;
-                double a = 1;
+                short b[] = { 1 };
+                unsigned short c[1] = { 1 };
+                int d[2] = { 1, 2 };
+                unsigned int *e;
+                long f, *g = &f;
+                unsigned long h, i = 1;
+                float j;
+                double k = 1;
                 
                 struct A {} a1;
                 struct B {
                     int a;
-                } b1 = { 1 };
+                } b1 = { .a = 1 };
                 struct C {
                     int a;
                     float b;
-                } c1 = { 1, 2 };
+                } c1 = { .a = 1, .b = 2 };
                 struct D {};
-
+            
                 return;
             }
             
-            int f(int a) {
+            int m(int a) {
                 while (1) {
                     continue;
                 }
-
+            
                 do {
                     break;
                 } while (1);
-
+            
                 for (a = 1; a < 2; a++) 1;
-
+            
                 for ( ; ; ) 1;
                 
                 if (1) 1;
-
+            
                 if (1) 1; else 1;
-
+            
                 switch (1) {
                     case 1:
                         1;
                 }
-
+            
                 switch (1) {
                     case 1:
                         1;
                     default:
                         1;
                 }
-
+            
                 return 0;
             }
         ";
@@ -601,29 +614,28 @@ void f(int a, unsigned int b) {}
     {
         ;
     }
-    T a = 1, a;
     char a[1];
-    short a[] = { 1 };
-    unsigned short a[1] = { 1 };
-    int a[2] = { 1, 2 };
-    unsigned int *a;
-    long *a = &a;
-    unsigned long a = *a;
-    float a;
-    double a = 1;
+    short b[] = { 1 };
+    unsigned short c[1] = { 1 };
+    int d[2] = { 1, 2 };
+    unsigned int *e;
+    long f, *g = &f;
+    unsigned long h, i = 1;
+    float j;
+    double k = 1;
     struct A {} a1;
     struct B {
         int a;
-    } b1 = { 1 };
+    } b1 = { .a = 1 };
     struct C {
         int a;
         float b;
-    } c1 = { 1, 2 };
+    } c1 = { .a = 1, .b = 2 };
     struct D {};
     return;
 }
 
-int f(int a) {
+int m(int a) {
     while (1) {
         continue;
     }

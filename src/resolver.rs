@@ -5,7 +5,7 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 
 use crate::structure::{
-    Array, Error, Expression, Function, Locate, Location, Statement, StaticObject, Type,
+    Array, Error, Expression, Function, Locate, Location, Pointer, Statement, StaticObject, Type,
     TypeRelationship,
 };
 
@@ -46,12 +46,17 @@ impl Symbol {
 enum Bound {
     Type(Type),
     Symbol(Symbol),
+    Array(Symbol),
 }
 
 #[derive(Clone, Debug)]
 struct TypeBound {
     upper: Vec<Bound>,
     lower: Vec<Bound>,
+    infix: Option<(Symbol, Symbol)>,
+    member: Option<String>,
+    ptr_member: Option<String>,
+    reference: bool,
     bounded: Option<Type>,
     wrapped: Option<Rc<RefCell<Type>>>,
 }
@@ -67,6 +72,10 @@ impl TypeBound {
         TypeBound {
             upper: Vec::new(),
             lower: Vec::new(),
+            infix: None,
+            member: None,
+            ptr_member: None,
+            reference: false,
             bounded,
             wrapped: Some(wrapped),
         }
@@ -76,6 +85,10 @@ impl TypeBound {
         TypeBound {
             upper: Vec::new(),
             lower: Vec::new(),
+            infix: None,
+            member: None,
+            ptr_member: None,
+            reference: false,
             bounded: Some(bounded),
             wrapped: None,
         }
@@ -85,6 +98,23 @@ impl TypeBound {
         TypeBound {
             upper: vec![bound.clone()],
             lower: vec![bound.clone()],
+            infix: None,
+            member: None,
+            ptr_member: None,
+            reference: false,
+            bounded: None,
+            wrapped: None,
+        }
+    }
+
+    fn infixed(left: Symbol, right: Symbol) -> TypeBound {
+        TypeBound {
+            upper: Vec::new(),
+            lower: Vec::new(),
+            infix: Some((left, right)),
+            member: None,
+            ptr_member: None,
+            reference: false,
             bounded: None,
             wrapped: None,
         }
@@ -135,6 +165,10 @@ impl TypeBound {
         TypeBound {
             upper,
             lower,
+            infix: None,
+            member: None,
+            ptr_member: None,
+            reference: false,
             bounded,
             wrapped,
         }
@@ -323,14 +357,44 @@ impl SymbolTable {
     }
 
     fn update_wrapped(&mut self) {
-        for (_, type_bound) in self.get_all_symbols() {
+        let symbols: Vec<_> = self
+            .get_all_symbols()
+            .into_iter()
+            .map(|(_, type_bound)| type_bound)
+            .collect();
+        let returns = self.func_returns.values();
+        let params = self
+            .func_params
+            .values()
+            .map(|param| param.values())
+            .flatten();
+        let type_bounds = symbols.iter().chain(returns).chain(params);
+        for type_bound in type_bounds {
             let TypeBound {
                 wrapped, bounded, ..
             } = type_bound;
             if wrapped.is_some() && bounded.is_some() {
                 let mut old_type = wrapped.as_ref().unwrap().borrow_mut();
                 if !old_type.specialized() {
-                    old_type.set_specialized(bounded.unwrap());
+                    let bounded = match bounded.clone().unwrap() {
+                        Type::Char {
+                            num_flag: true,
+                            array_flag,
+                            array_len,
+                            pointer_flag,
+                            location,
+                        } => Type::Short {
+                            signed_flag: true,
+                            array_flag,
+                            array_len,
+                            pointer_flag,
+                            location,
+                        },
+                        type_ => type_,
+                    };
+                    let (array_flag, array_len) = old_type.get_array();
+                    let bounded = bounded.set_array(array_flag, array_len);
+                    old_type.set_specialized(bounded);
                 }
             }
         }
@@ -366,6 +430,7 @@ impl<'a> Resolver<'a> {
         }
         self.symbol_table.leave_scope();
         self.resolve_symbols();
+        self.implicit_return();
         self.symbol_table.update_wrapped();
         if self.errors.is_empty() {
             Ok(ast)
@@ -402,6 +467,22 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    fn implicit_return(&mut self) {
+        for (_, type_bound) in self.symbol_table.func_returns.iter_mut() {
+            if type_bound.upper.is_empty()
+                && type_bound.lower.is_empty()
+                && type_bound.bounded.is_none()
+            {
+                type_bound.bounded = Some(Type::Void {
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    location: Location::default(),
+                });
+            }
+        }
+    }
+
     fn resolve_type_bound(
         &mut self,
         symbol: &Symbol,
@@ -409,116 +490,251 @@ impl<'a> Resolver<'a> {
         modified: &mut bool,
         aggressive: bool,
     ) {
-        let mut upper_type = Type::Any;
-        for bound in type_bound.upper.iter() {
-            let type_ = match bound {
-                Bound::Type(type_) => Some(type_).cloned(),
-                Bound::Symbol(symbol) => self
-                    .symbol_table
-                    .get_type_bound(symbol)
-                    .unwrap()
-                    .bounded
-                    .clone(),
-            };
-            match type_ {
-                None => {
-                    if !aggressive {
-                        return;
-                    }
-                }
-                Some(type_) => match Type::compare_types(&mut upper_type, &type_) {
-                    TypeRelationship::Sub => (),
-                    TypeRelationship::Base => {
-                        upper_type = type_;
-                    }
-                    TypeRelationship::Equal => (),
-                    TypeRelationship::None => {
-                        let message =
-                            format!("Incompatible types `{:?}` and `{:?}`.", upper_type, type_);
-                        self.push_error(&message, &type_.locate());
-                        return;
-                    }
-                },
+        let type_ = if let Some((left_symbol, right_symbol)) = &type_bound.infix {
+            if type_bound.bounded.is_some() {
+                return;
             }
-        }
-        let mut lower_type = Type::Nothing;
-        for bound in type_bound.lower.iter() {
-            let type_ = match bound {
-                Bound::Type(type_) => Some(type_).cloned(),
-                Bound::Symbol(symbol) => self
-                    .symbol_table
-                    .get_type_bound(symbol)
-                    .unwrap()
-                    .bounded
-                    .clone(),
-            };
-            match type_ {
-                None => {
-                    if !aggressive {
-                        return;
-                    }
-                }
-                Some(type_) => match Type::compare_types(&mut lower_type, &type_) {
-                    TypeRelationship::Sub => {
-                        lower_type = type_;
-                    }
-                    TypeRelationship::Base => (),
-                    TypeRelationship::Equal => (),
-                    TypeRelationship::None => {
-                        let message =
-                            format!("Incompatible types `{:?}` and `{:?}`.", lower_type, type_);
-                        self.push_error(&message, &type_.locate());
-                        return;
-                    }
-                },
-            }
-        }
-        let (lower_type, upper_type) =
-            match Type::instantiate_any_nothing(lower_type.clone(), upper_type.clone()) {
-                Ok((lower_type, upper_type)) => (lower_type, upper_type),
-                Err(_) => {
-                    return;
-                }
-            };
-        if let Some(old_type) = &type_bound.bounded {
-            match Type::compare_types(old_type, &upper_type) {
-                TypeRelationship::Sub | TypeRelationship::Equal => {
-                    match Type::compare_types(old_type, &lower_type) {
-                        TypeRelationship::Base | TypeRelationship::Equal => {
-                            return;
-                        }
-                        _ => {
+            let mut _modified = false;
+            let mut left_type_bound = self.symbol_table.get_type_bound(left_symbol).unwrap();
+
+            self.resolve_type_bound(
+                left_symbol,
+                &mut left_type_bound,
+                &mut _modified,
+                aggressive,
+            );
+            let mut right_type_bound = self.symbol_table.get_type_bound(right_symbol).unwrap();
+            self.resolve_type_bound(
+                right_symbol,
+                &mut right_type_bound,
+                &mut _modified,
+                aggressive,
+            );
+            if let Some(left_type) = left_type_bound.bounded {
+                if let Some(right_type) = right_type_bound.bounded {
+                    match Type::compare_types(&left_type, &right_type) {
+                        TypeRelationship::Sub => right_type,
+                        TypeRelationship::Base => left_type,
+                        TypeRelationship::Equal => left_type,
+                        TypeRelationship::None => {
                             let message = format!(
                                 "Incompatible types `{:?}` and `{:?}`.",
-                                old_type, lower_type
+                                left_type, right_type
                             );
-                            self.push_error(&message, &old_type.locate());
+                            self.push_error(&message, &left_type.locate());
                             return;
                         }
                     }
+                } else {
+                    return;
                 }
+            } else {
+                return;
+            }
+        } else {
+            let mut upper_type = Type::Any;
+            for bound in type_bound.upper.iter() {
+                let type_ = match bound {
+                    Bound::Type(type_) => Some(type_).cloned(),
+                    Bound::Symbol(symbol) => {
+                        let type_ = self
+                            .symbol_table
+                            .get_type_bound(symbol)
+                            .unwrap()
+                            .bounded
+                            .clone();
+
+                        if type_bound.reference {
+                            type_.map(|t| t.set_pointer_flag(true))
+                        } else {
+                            type_
+                        }
+                    }
+                    Bound::Array(symbol) => self
+                        .symbol_table
+                        .get_type_bound(symbol)
+                        .unwrap()
+                        .bounded
+                        .map(|type_| type_.set_array(false, None))
+                        .clone(),
+                };
+
+                match type_ {
+                    None => {
+                        if !aggressive {
+                            return;
+                        }
+                    }
+                    Some(type_) => match Type::compare_types(&mut upper_type, &type_) {
+                        TypeRelationship::Sub => (),
+                        TypeRelationship::Base => {
+                            upper_type = type_;
+                        }
+                        TypeRelationship::Equal => (),
+                        TypeRelationship::None => {
+                            let message =
+                                format!("Incompatible types `{:?}` and `{:?}`.", upper_type, type_);
+                            self.push_error(&message, &type_.locate());
+                            return;
+                        }
+                    },
+                }
+            }
+
+            let mut lower_type = Type::Nothing;
+            for bound in type_bound.lower.iter() {
+                let type_ = match bound {
+                    Bound::Type(type_) => Some(type_).cloned(),
+                    Bound::Symbol(symbol) => {
+                        let type_ = self
+                            .symbol_table
+                            .get_type_bound(symbol)
+                            .unwrap()
+                            .bounded
+                            .clone();
+
+                        if type_bound.reference {
+                            type_.map(|t| t.set_pointer_flag(true))
+                        } else {
+                            type_
+                        }
+                    }
+                    Bound::Array(symbol) => self
+                        .symbol_table
+                        .get_type_bound(symbol)
+                        .unwrap()
+                        .bounded
+                        .map(|type_| type_.set_array(false, None))
+                        .clone(),
+                };
+                match type_ {
+                    None => {
+                        if !aggressive {
+                            return;
+                        }
+                    }
+                    Some(type_) => match Type::compare_types(&mut lower_type, &type_) {
+                        TypeRelationship::Sub => {
+                            lower_type = type_;
+                        }
+                        TypeRelationship::Base => (),
+                        TypeRelationship::Equal => (),
+                        TypeRelationship::None => {
+                            let message =
+                                format!("Incompatible types `{:?}` and `{:?}`.", lower_type, type_);
+                            self.push_error(&message, &type_.locate());
+                            return;
+                        }
+                    },
+                }
+            }
+
+            let (lower_type, upper_type) =
+                match Type::instantiate_any_nothing(lower_type.clone(), upper_type.clone()) {
+                    Ok((lower_type, upper_type)) => (lower_type, upper_type),
+                    Err(_) => {
+                        return;
+                    }
+                };
+
+            if let Some(old_type) = &type_bound.bounded {
+                match Type::compare_types(old_type, &upper_type) {
+                    TypeRelationship::Sub | TypeRelationship::Equal => {
+                        match Type::compare_types(old_type, &lower_type) {
+                            TypeRelationship::Base | TypeRelationship::Equal => {
+                                return;
+                            }
+                            _ => {
+                                let message = format!(
+                                    "Incompatible types `{:?}` and `{:?}`.",
+                                    old_type, lower_type
+                                );
+                                self.push_error(&message, &old_type.locate());
+                                return;
+                            }
+                        }
+                    }
+                    _ => {
+                        let message = format!(
+                            "Incompatible types `{:?}` and `{:?}`.",
+                            old_type, upper_type
+                        );
+                        self.push_error(&message, &old_type.locate());
+                        return;
+                    }
+                }
+            }
+            match Type::compare_types(&lower_type, &upper_type) {
+                TypeRelationship::Sub | TypeRelationship::Equal => lower_type,
                 _ => {
                     let message = format!(
                         "Incompatible types `{:?}` and `{:?}`.",
-                        old_type, upper_type
+                        lower_type, upper_type
                     );
-                    self.push_error(&message, &old_type.locate());
+                    self.push_error(&message, &lower_type.locate());
                     return;
                 }
             }
-        }
-        let type_ = match Type::compare_types(&lower_type, &upper_type) {
-            TypeRelationship::Sub | TypeRelationship::Equal => lower_type,
-            _ => {
-                let message = format!(
-                    "Incompatible types `{:?}` and `{:?}`.",
-                    lower_type, upper_type
-                );
-                self.push_error(&message, &lower_type.locate());
+        };
+        // if type_bound.reference {
+        //     type_bound.bounded.as_mut().map(|type_| type_.set_pointer_flag(true));
+        // }
+        // else
+        if let Some(mem) = &type_bound.ptr_member {
+            if let Type::Struct { members, .. } = &type_ {
+                if let Type::Struct {
+                    pointer_flag: true, ..
+                } = &type_
+                {
+                    match members.get(mem) {
+                        Some(type_) => {
+                            type_bound.upper.clear();
+                            type_bound.lower.clear();
+                            type_bound.infix = None;
+                            type_bound.member = None;
+                            type_bound.bounded = Some(type_.clone());
+                        }
+                        None => {
+                            let message = format!("Not a member.");
+                            self.push_error(&message, &type_.locate());
+                            return;
+                        }
+                    }
+                } else {
+                    let message = format!("Not a pointer to astructure.");
+                    self.push_error(&message, &type_.locate());
+                    return;
+                }
+            } else {
+                let message = format!("Not a structure.");
+                self.push_error(&message, &type_.locate());
                 return;
             }
-        };
-        type_bound.bounded = Some(type_.clone());
+        } else if let Some(mem) = &type_bound.member {
+            if let Type::Struct { members, .. } = &type_ {
+                match members.get(mem) {
+                    Some(type_) => {
+                        type_bound.upper.clear();
+                        type_bound.lower.clear();
+                        type_bound.infix = None;
+                        type_bound.member = None;
+                        type_bound.bounded = Some(type_.clone());
+                    }
+                    None => {
+                        let message = format!("Not a member.");
+                        self.push_error(&message, &type_.locate());
+                        return;
+                    }
+                }
+            } else {
+                let message = format!("Not a structure.");
+                self.push_error(&message, &type_.locate());
+                return;
+            }
+        } else {
+            type_bound.bounded = Some(type_.clone());
+        }
+
         self.symbol_table
             .update_type_bound(symbol.clone(), type_bound.clone());
         *modified = true;
@@ -696,6 +912,7 @@ impl<'a> Resolver<'a> {
                                 .update_type_bound(expr_symbol, expr_type_bound);
                         }
                     } else {
+                        let (array_flag, array_len) = type_.borrow().get_array();
                         for (name, expr) in pairs {
                             if name.is_some() {
                                 let message = "No field in InitList of array.";
@@ -705,12 +922,20 @@ impl<'a> Resolver<'a> {
                             if expr.is_err() {
                                 return;
                             }
-                            let (expr_symbol, mut expr_type_bound) = expr.unwrap();
-                            expr_type_bound
-                                .upper
-                                .push(Bound::Type(base_type.borrow().clone()));
-                            self.symbol_table
-                                .update_type_bound(expr_symbol, expr_type_bound);
+                            let (_, expr_type_bound) = expr.unwrap();
+                            if let TypeBound {
+                                bounded: Some(type_),
+                                ..
+                            } = expr_type_bound
+                            {
+                                type_bound
+                                    .lower
+                                    .push(Bound::Type(type_.set_array(array_flag, array_len)));
+                            } else {
+                                let message = "InitList must be const.";
+                                self.push_error(&message, &type_.borrow().locate());
+                                return;
+                            }
                         }
                     }
                 } else {
@@ -873,6 +1098,7 @@ impl<'a> Resolver<'a> {
         let str_value = format!("{}", value);
         let type_ = if str_value.parse::<u8>().is_ok() {
             Type::Char {
+                num_flag: true,
                 array_flag: false,
                 array_len: None,
                 pointer_flag: false,
@@ -972,6 +1198,7 @@ impl<'a> Resolver<'a> {
 
     fn resolve_expression_charconst(&mut self) -> Result<(Symbol, TypeBound), ()> {
         let type_ = Type::Char {
+            num_flag: false,
             array_flag: false,
             array_len: None,
             pointer_flag: false,
@@ -986,6 +1213,7 @@ impl<'a> Resolver<'a> {
 
     fn resolve_expression_strconst(&mut self) -> Result<(Symbol, TypeBound), ()> {
         let type_ = Type::Char {
+            num_flag: false,
             array_flag: false,
             array_len: None,
             pointer_flag: true,
@@ -1022,6 +1250,7 @@ impl<'a> Resolver<'a> {
                     location: Location::default(),
                 }));
                 expr_type_bound.upper.push(Bound::Type(Type::Char {
+                    num_flag: true,
                     array_flag: false,
                     array_len: None,
                     pointer_flag: false,
@@ -1035,12 +1264,32 @@ impl<'a> Resolver<'a> {
                     .define_symbol(symbol.clone(), type_bound.clone());
                 Ok((symbol, type_bound))
             }
-            "*" | "&" => {
+            "&" => {
                 // ptr
                 let symbol = self.symbol_table.make_expression_symbol();
                 let mut type_bound = TypeBound::squeezed(Bound::Symbol(expr_symbol));
-                type_bound.upper.push(Bound::Type(Type::AnyRef));
-                type_bound.lower.push(Bound::Type(Type::Null));
+                type_bound.reference = true;
+                self.symbol_table
+                    .define_symbol(symbol.clone(), type_bound.clone());
+                Ok((symbol, type_bound))
+            }
+            "*" => {
+                // num
+                let symbol = self.symbol_table.make_expression_symbol();
+                let mut type_bound = TypeBound::squeezed(Bound::Symbol(expr_symbol));
+                type_bound.upper.push(Bound::Type(Type::Double {
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    location: Location::default(),
+                }));
+                type_bound.lower.push(Bound::Type(Type::Char {
+                    num_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    location: Location::default(),
+                }));
                 self.symbol_table
                     .define_symbol(symbol.clone(), type_bound.clone());
                 Ok((symbol, type_bound))
@@ -1052,13 +1301,42 @@ impl<'a> Resolver<'a> {
     fn resolve_expression_infix(
         &mut self,
         left: &Expression,
-        _operator: &'static str,
+        operator: &'static str,
         right: &Expression,
     ) -> Result<(Symbol, TypeBound), ()> {
-        let (_, left_type_bound) = self.resolve_expression(left)?;
-        let (_, right_type_bound) = self.resolve_expression(right)?;
+        let (left_symbol, left_type_bound) = self.resolve_expression(left)?;
+
         let symbol = self.symbol_table.make_expression_symbol();
-        let type_bound = TypeBound::merge(&left_type_bound, &right_type_bound, "none");
+        let type_bound = match operator {
+            "." => {
+                let name = if let Expression::Ident { value, .. } = right {
+                    value
+                } else {
+                    let message = format!("Struct member should be a string.");
+                    self.push_error(&message, &left.locate());
+                    return Err(());
+                };
+                let mut type_bound = TypeBound::squeezed(Bound::Symbol(left_symbol.clone()));
+                type_bound.member = Some(name.to_string());
+                type_bound
+            }
+            "->" => {
+                let name = if let Expression::Ident { value, .. } = right {
+                    value
+                } else {
+                    let message = format!("Struct member should be a string.");
+                    self.push_error(&message, &left.locate());
+                    return Err(());
+                };
+                let mut type_bound = TypeBound::squeezed(Bound::Symbol(left_symbol.clone()));
+                type_bound.ptr_member = Some(name.to_string());
+                type_bound
+            }
+            _ => {
+                let (right_symbol, right_type_bound) = self.resolve_expression(right)?;
+                TypeBound::infixed(left_symbol.clone(), right_symbol.clone())
+            }
+        };
         self.symbol_table
             .define_symbol(symbol.clone(), type_bound.clone());
         Ok((symbol, type_bound))
@@ -1095,7 +1373,7 @@ impl<'a> Resolver<'a> {
         expression: &Expression,
         index: &Expression,
     ) -> Result<(Symbol, TypeBound), ()> {
-        let (_, expr_type_bound) = self.resolve_expression(expression)?;
+        let (expr_symbol, expr_type_bound) = self.resolve_expression(expression)?;
         let (index_symbol, mut index_type_bound) = self.resolve_expression(index)?;
         index_type_bound.upper.push(Bound::Type(Type::Long {
             signed_flag: false,
@@ -1105,6 +1383,7 @@ impl<'a> Resolver<'a> {
             location: Location::default(),
         }));
         index_type_bound.lower.push(Bound::Type(Type::Char {
+            num_flag: true,
             array_flag: false,
             array_len: None,
             pointer_flag: false,
@@ -1112,14 +1391,13 @@ impl<'a> Resolver<'a> {
         }));
         self.symbol_table
             .update_type_bound(index_symbol.clone(), index_type_bound.clone());
-        let type_ = if let TypeBound {
-            bounded: Some(type_),
+        if let TypeBound {
+            wrapped: Some(type_),
             ..
         } = expr_type_bound
         {
-            if type_.get_array().0 {
-                type_.set_array(false, None)
-            } else {
+            let type_ = type_.borrow().clone();
+            if !type_.get_array().0 {
                 let message = "Not an array.";
                 self.push_error(&message, &expression.locate());
                 return Err(());
@@ -1130,7 +1408,7 @@ impl<'a> Resolver<'a> {
             return Err(());
         };
         let symbol = self.symbol_table.make_expression_symbol();
-        let type_bound = TypeBound::squeezed(Bound::Type(type_));
+        let type_bound = TypeBound::squeezed(Bound::Array(expr_symbol.clone()));
         self.symbol_table
             .define_symbol(symbol.clone(), type_bound.clone());
         Ok((symbol, type_bound))
@@ -1191,6 +1469,10 @@ impl<'a> Resolver<'a> {
             let type_bound = TypeBound {
                 upper: Vec::new(),
                 lower: vec![Bound::Symbol(return_symbol)],
+                infix: None,
+                member: None,
+                ptr_member: None,
+                reference: false,
                 bounded: None,
                 wrapped: None,
             };
@@ -1212,5 +1494,713 @@ impl<'a> Resolver<'a> {
             .iter()
             .map(|(name, expr)| (name.clone(), self.resolve_expression(expr)))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+    use crate::parser::Parser;
+    use crate::preprocessor::Preprocessor;
+
+    #[test]
+    fn function() {
+        let source = "
+            f(a) {
+                return a;
+            }
+
+            m() {
+                f(1);
+                return;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![
+            StaticObject::Function(Box::new(Function {
+                return_type: Rc::new(RefCell::new(Type::T {
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    specialized: Some(Box::new(Type::Short {
+                        signed_flag: true,
+                        array_flag: false,
+                        array_len: None,
+                        pointer_flag: false,
+                        location: Location::default(),
+                    })),
+                    location: Location::default(),
+                })),
+                name: "f".to_string(),
+                parameters: [(
+                    "a".to_string(),
+                    Rc::new(RefCell::new(Type::T {
+                        array_flag: false,
+                        array_len: None,
+                        pointer_flag: false,
+                        specialized: Some(Box::new(Type::Short {
+                            signed_flag: true,
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                        })),
+                        location: Location::default(),
+                    })),
+                )]
+                .iter()
+                .cloned()
+                .collect(),
+                body: Statement::Block {
+                    statements: vec![Statement::Return {
+                        expression: Some(Expression::Ident {
+                            value: "a".to_string(),
+                            location: Location::default(),
+                        }),
+                        location: Location::default(),
+                    }],
+                    location: Location::default(),
+                },
+                location: Location::default(),
+            })),
+            StaticObject::Function(Box::new(Function {
+                return_type: Rc::new(RefCell::new(Type::T {
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    specialized: Some(Box::new(Type::Void {
+                        array_flag: false,
+                        array_len: None,
+                        pointer_flag: false,
+                        location: Location::default(),
+                    })),
+                    location: Location::default(),
+                })),
+                name: "m".to_string(),
+                parameters: IndexMap::new(),
+                body: Statement::Block {
+                    statements: vec![
+                        Statement::Expr(Expression::Call {
+                            expression: Box::new(Expression::Ident {
+                                value: "f".to_string(),
+                                location: Location::default(),
+                            }),
+                            arguments: vec![Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }],
+                        }),
+                        Statement::Return {
+                            expression: None,
+                            location: Location::default(),
+                        },
+                    ],
+                    location: Location::default(),
+                },
+                location: Location::default(),
+            })),
+        ];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
+
+    #[test]
+    fn function_reverse() {
+        let source = "
+            f() {
+                a = 1;
+                return a;
+            }
+
+            int m() {
+                return f();
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![
+            StaticObject::Function(Box::new(Function {
+                return_type: Rc::new(RefCell::new(Type::T {
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    specialized: Some(Box::new(Type::Short {
+                        signed_flag: true,
+                        array_flag: false,
+                        array_len: None,
+                        pointer_flag: false,
+                        location: Location::default(),
+                    })),
+                    location: Location::default(),
+                })),
+                name: "f".to_string(),
+                parameters: IndexMap::new(),
+                body: Statement::Block {
+                    statements: vec![
+                        Statement::Def {
+                            base_type: Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                location: Location::default(),
+                                specialized: None,
+                            })),
+                            declarators: vec![(
+                                Rc::new(RefCell::new(Type::T {
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    specialized: Some(Box::new(Type::Short {
+                                        signed_flag: true,
+                                        array_flag: false,
+                                        array_len: None,
+                                        pointer_flag: false,
+                                        location: Location::default(),
+                                    })),
+                                    location: Location::default(),
+                                })),
+                                "a".to_string(),
+                                Some(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                            )],
+                            location: Location::default(),
+                        },
+                        Statement::Return {
+                            expression: Some(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                            location: Location::default(),
+                        },
+                    ],
+                    location: Location::default(),
+                },
+                location: Location::default(),
+            })),
+            StaticObject::Function(Box::new(Function {
+                return_type: Rc::new(RefCell::new(Type::Int {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    location: Location::default(),
+                })),
+                name: "m".to_string(),
+                parameters: IndexMap::new(),
+                body: Statement::Block {
+                    statements: vec![Statement::Return {
+                        expression: Some(Expression::Call {
+                            expression: Box::new(Expression::Ident {
+                                value: "f".to_string(),
+                                location: Location::default(),
+                            }),
+                            arguments: Vec::new(),
+                        }),
+                        location: Location::default(),
+                    }],
+                    location: Location::default(),
+                },
+                location: Location::default(),
+            })),
+        ];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
+
+    #[test]
+    fn statement_for() {
+        let source = "
+            void f() {
+                for (i = 1; ; ) ;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void {
+                array_flag: false,
+                array_len: None,
+                pointer_flag: false,
+                location: Location::default(),
+            })),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![Statement::For {
+                    initialization: Some(Box::new(Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Short {
+                                    signed_flag: true,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "i".to_string(),
+                            Some(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    })),
+                    condition: None,
+                    increment: None,
+                    body: Box::new(Statement::Null(Location::default())),
+                    location: Location::default(),
+                }],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
+
+    #[test]
+    fn expression_const() {
+        let source = "
+            void f() {
+                a = 1;
+                b = 1.1;
+                c = 'c';
+                d = \"d\";
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void {
+                array_flag: false,
+                array_len: None,
+                pointer_flag: false,
+                location: Location::default(),
+            })),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Short {
+                                    signed_flag: true,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "a".to_string(),
+                            Some(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Float {
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "b".to_string(),
+                            Some(Expression::FloatConst {
+                                value: 1.1,
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Char {
+                                    num_flag: false,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "c".to_string(),
+                            Some(Expression::CharConst {
+                                value: "'c'".to_string(),
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Char {
+                                    num_flag: false,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: true,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "d".to_string(),
+                            Some(Expression::StrConst {
+                                value: "\"d\"".to_string(),
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
+
+    #[test]
+    fn expression_general() {
+        let source = "
+            f() {
+                a = +1;
+                b = a++;
+                return a + b;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::T {
+                array_flag: false,
+                array_len: None,
+                pointer_flag: false,
+                specialized: Some(Box::new(Type::Short {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    location: Location::default(),
+                })),
+                location: Location::default(),
+            })),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Short {
+                                    signed_flag: true,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "a".to_string(),
+                            Some(Expression::Prefix {
+                                expression: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                                operator: "+",
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Short {
+                                    signed_flag: true,
+                                    array_flag: false,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "b".to_string(),
+                            Some(Expression::Suffix {
+                                expression: Box::new(Expression::Ident {
+                                    value: "a".to_string(),
+                                    location: Location::default(),
+                                }),
+                                operator: "++",
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Return {
+                        expression: Some(Expression::Infix {
+                            left: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                            operator: "+",
+                            right: Box::new(Expression::Ident {
+                                value: "b".to_string(),
+                                location: Location::default(),
+                            }),
+                        }),
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
+
+    #[test]
+    fn array() {
+        let source = "
+            f() {
+                T a[] = {1};
+                return a[0];
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::T {
+                array_flag: false,
+                array_len: None,
+                pointer_flag: false,
+                specialized: Some(Box::new(Type::Short {
+                    signed_flag: true,
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    location: Location::default(),
+                })),
+                location: Location::default(),
+            })),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            array_len: None,
+                            pointer_flag: false,
+                            location: Location::default(),
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: true,
+                                array_len: None,
+                                pointer_flag: false,
+                                specialized: Some(Box::new(Type::Short {
+                                    signed_flag: true,
+                                    array_flag: true,
+                                    array_len: None,
+                                    pointer_flag: false,
+                                    location: Location::default(),
+                                })),
+                                location: Location::default(),
+                            })),
+                            "a".to_string(),
+                            Some(Expression::InitList {
+                                pairs: vec![(
+                                    None,
+                                    Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    },
+                                )],
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Return {
+                        expression: Some(Expression::Index {
+                            expression: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                            index: Box::new(Expression::IntConst {
+                                value: 0,
+                                location: Location::default(),
+                            }),
+                        }),
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
+
+    #[test]
+    fn implicit_return() {
+        let source = "
+            f() {}
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::T {
+                array_flag: false,
+                array_len: None,
+                pointer_flag: false,
+                specialized: Some(Box::new(Type::Void {
+                    array_flag: false,
+                    array_len: None,
+                    pointer_flag: false,
+                    location: Location::default(),
+                })),
+                location: Location::default(),
+            })),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: Vec::new(),
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
     }
 }

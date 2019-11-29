@@ -261,6 +261,7 @@ pub enum Type {
         location: Location,
     },
     Char {
+        num_flag: bool,
         array_flag: bool,
         array_len: Option<usize>,
         pointer_flag: bool,
@@ -323,13 +324,25 @@ impl Array for Type {
                 location,
                 specialized,
                 ..
-            } => T {
-                array_flag,
-                array_len,
-                pointer_flag: *pointer_flag,
-                location: location.clone(),
-                specialized: specialized.clone(),
-            },
+            } => {
+                if let Some(type_) = specialized {
+                    T {
+                        array_flag,
+                        array_len,
+                        pointer_flag: *pointer_flag,
+                        location: location.clone(),
+                        specialized: Some(Box::new(type_.set_array(array_flag, array_len))),
+                    }
+                } else {
+                    T {
+                        array_flag,
+                        array_len,
+                        pointer_flag: *pointer_flag,
+                        location: location.clone(),
+                        specialized: None,
+                    }
+                }
+            }
             Void {
                 pointer_flag,
                 location,
@@ -341,10 +354,12 @@ impl Array for Type {
                 location: location.clone(),
             },
             Char {
+                num_flag,
                 pointer_flag,
                 location,
                 ..
             } => Char {
+                num_flag: *num_flag,
                 array_flag,
                 array_len,
                 pointer_flag: *pointer_flag,
@@ -434,8 +449,15 @@ impl Array for Type {
             T {
                 array_flag,
                 array_len,
+                specialized,
                 ..
-            } => (*array_flag, *array_len),
+            } => {
+                if let Some(type_) = specialized {
+                    type_.get_array()
+                } else {
+                    (*array_flag, *array_len)
+                }
+            }
             Void {
                 array_flag,
                 array_len,
@@ -495,13 +517,25 @@ impl Pointer for Type {
                 location,
                 specialized,
                 ..
-            } => T {
-                array_flag,
-                array_len,
-                pointer_flag,
-                location,
-                specialized,
-            },
+            } => {
+                if let Some(type_) = specialized {
+                    T {
+                        array_flag,
+                        array_len,
+                        pointer_flag,
+                        location,
+                        specialized: Some(Box::new(type_.set_pointer_flag(pointer_flag))),
+                    }
+                } else {
+                    T {
+                        array_flag,
+                        array_len,
+                        pointer_flag,
+                        location,
+                        specialized: None,
+                    }
+                }
+            }
             Void {
                 array_flag,
                 array_len,
@@ -514,11 +548,13 @@ impl Pointer for Type {
                 location,
             },
             Char {
+                num_flag,
                 array_flag,
                 array_len,
                 location,
                 ..
             } => Char {
+                num_flag,
                 array_flag,
                 array_len,
                 pointer_flag,
@@ -611,7 +647,17 @@ impl Pointer for Type {
             Nothing => unreachable!(),
             AnyRef => unreachable!(),
             Null => unreachable!(),
-            T { pointer_flag, .. } => *pointer_flag,
+            T {
+                pointer_flag,
+                specialized,
+                ..
+            } => {
+                if let Some(type_) = specialized {
+                    type_.get_pointer_flag()
+                } else {
+                    *pointer_flag
+                }
+            }
             Void { pointer_flag, .. } => *pointer_flag,
             Char { pointer_flag, .. } => *pointer_flag,
             Short { pointer_flag, .. } => *pointer_flag,
@@ -860,6 +906,16 @@ impl Type {
                     ..
                 } => Self::instantiate_any_nothing(left, *type_.clone()),
                 Void { .. } | Struct { .. } => Ok((right.clone(), right)),
+                ptr if ptr.get_pointer_flag() => Ok((ptr.clone(), ptr.clone())),
+                arr if arr.get_array().0 => Ok((
+                    Type::Double {
+                        array_flag: arr.get_array().0,
+                        array_len: arr.get_array().1,
+                        pointer_flag: arr.get_pointer_flag(),
+                        location: Location::default(),
+                    },
+                    arr.clone(),
+                )),
                 _ => Ok((
                     Double {
                         array_flag: false,
@@ -881,8 +937,20 @@ impl Type {
                     ..
                 } => Self::instantiate_any_nothing(left, *type_.clone()),
                 Void { .. } | Struct { .. } => Ok((right.clone(), right)),
+                ptr if ptr.get_pointer_flag() => Ok((ptr.clone(), ptr.clone())),
+                arr if arr.get_array().0 => Ok((
+                    Type::Char {
+                        num_flag: true,
+                        array_flag: arr.get_array().0,
+                        array_len: arr.get_array().1,
+                        pointer_flag: arr.get_pointer_flag(),
+                        location: Location::default(),
+                    },
+                    arr.clone(),
+                )),
                 _ => Ok((
                     Char {
+                        num_flag: true,
                         array_flag: false,
                         array_len: None,
                         pointer_flag: false,

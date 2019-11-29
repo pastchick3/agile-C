@@ -1,7 +1,7 @@
 //! A parser producing a vector of functions which may contain unresolved dummy types.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use indexmap::IndexMap;
@@ -14,21 +14,25 @@ use crate::structure::{
 /// A structure containg names defined in different scopes.
 struct Environment {
     envs: Vec<HashSet<String>>,
+    structs: Vec<HashMap<String, Type>>,
 }
 
 impl Environment {
     fn new() -> Environment {
         Environment {
             envs: vec![HashSet::new()],
+            structs: vec![HashMap::new()],
         }
     }
 
     fn enter(&mut self) {
         self.envs.push(HashSet::new());
+        self.structs.push(HashMap::new());
     }
 
     fn leave(&mut self) {
         self.envs.pop();
+        self.structs.pop();
     }
 
     fn define(&mut self, name: &str) {
@@ -38,6 +42,21 @@ impl Environment {
     fn is_defined(&self, name: &str) -> bool {
         let defined: Vec<_> = self.envs.iter().filter(|e| e.contains(name)).collect();
         !defined.is_empty()
+    }
+
+    fn define_struct(&mut self, name: &str, struct_: Type) {
+        self.structs
+            .last_mut()
+            .unwrap()
+            .insert(String::from(name), struct_);
+    }
+
+    fn get_struct(&self, name: &str) -> Option<Type> {
+        self.structs
+            .iter()
+            .rev()
+            .find_map(|structs| structs.get(name))
+            .cloned()
     }
 }
 
@@ -208,7 +227,11 @@ impl<'a> Parser<'a> {
             }
         };
         // Parse the return type.
-        let r#type = self.parse_type()?;
+        let mut r#type = self.parse_type()?;
+        if let Some(Token::Asterisk(_)) = self.tokens.last() {
+            self.tokens.pop();
+            r#type = r#type.set_pointer_flag(true);
+        }
         // Parse the function name.
         let name = match self.tokens.pop() {
             Some(Token::Ident { literal, .. }) => literal,
@@ -304,6 +327,7 @@ impl<'a> Parser<'a> {
                 location,
             }),
             Some(Token::Char(location)) => Ok(Type::Char {
+                num_flag: false,
                 array_flag: false,
                 array_len: None,
                 pointer_flag: false,
@@ -435,51 +459,57 @@ impl<'a> Parser<'a> {
             Expression::Ident { value, .. } => value,
             _ => return Err(()),
         };
-        self.assert_token("LBrace")?;
-        let mut members = IndexMap::new();
-        loop {
-            if let Some(Token::RBrace(_)) = self.tokens.last() {
-                self.tokens.pop();
-                break;
-            }
-            let (member, r#type) = match self.parse_statement()? {
-                Statement::Def {
-                    mut declarators, ..
-                } => {
-                    if declarators.len() == 1 {
-                        let declarator = declarators.pop().unwrap();
-                        (
-                            declarator.1,
-                            Rc::try_unwrap(declarator.0).unwrap().into_inner(),
-                        )
-                    } else {
+        if let Some(Token::LBrace(_)) = self.tokens.last() {
+            self.tokens.pop();
+            let mut members = IndexMap::new();
+            loop {
+                if let Some(Token::RBrace(_)) = self.tokens.last() {
+                    self.tokens.pop();
+                    break;
+                }
+                let (member, r#type) = match self.parse_statement()? {
+                    Statement::Def {
+                        mut declarators, ..
+                    } => {
+                        if declarators.len() == 1 {
+                            let declarator = declarators.pop().unwrap();
+                            (
+                                declarator.1,
+                                Rc::try_unwrap(declarator.0).unwrap().into_inner(),
+                            )
+                        } else {
+                            self.push_error("Expect fields.", Location::default());
+                            return Err(());
+                        }
+                    }
+                    _ => {
                         self.push_error("Expect fields.", Location::default());
                         return Err(());
                     }
-                }
-                _ => {
-                    self.push_error("Expect fields.", Location::default());
-                    return Err(());
-                }
-            };
-            members.insert(member.to_string(), r#type);
-            match self.tokens.pop() {
-                Some(Token::RBrace(_)) => break,
-                Some(tk) => self.tokens.push(tk),
-                None => {
-                    self.push_error("Unexpected EOF.", Location::default());
-                    return Err(());
+                };
+                members.insert(member.to_string(), r#type);
+                match self.tokens.pop() {
+                    Some(Token::RBrace(_)) => break,
+                    Some(tk) => self.tokens.push(tk),
+                    None => {
+                        self.push_error("Unexpected EOF.", Location::default());
+                        return Err(());
+                    }
                 }
             }
+            let struct_ = Type::Struct {
+                name: name.clone(),
+                members,
+                array_flag: false,
+                array_len: None,
+                pointer_flag: false,
+                location,
+            };
+            self.environment.define_struct(&name, struct_.clone());
+            Ok(struct_)
+        } else {
+            self.environment.get_struct(&name).ok_or(())
         }
-        Ok(Type::Struct {
-            name,
-            members,
-            array_flag: false,
-            array_len: None,
-            pointer_flag: false,
-            location,
-        })
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ()> {
@@ -1231,6 +1261,36 @@ mod tests {
     }
 
     #[test]
+    fn return_pointer() {
+        let source = "int *f() {}";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Int {
+                signed_flag: true,
+                array_flag: false,
+                array_len: None,
+                pointer_flag: true,
+                location: Location::default(),
+            })),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            body: Statement::Block {
+                statements: vec![],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
     fn function_empty() {
         let source = "void f() {}";
         let expected_errors = vec![];
@@ -1572,6 +1632,7 @@ mod tests {
                     },
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::Char {
+                            num_flag: false,
                             array_flag: false,
                             array_len: None,
                             pointer_flag: false,
@@ -1579,6 +1640,7 @@ mod tests {
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Char {
+                                num_flag: false,
                                 array_flag: true,
                                 array_len: Some(1),
                                 pointer_flag: false,

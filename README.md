@@ -176,9 +176,9 @@ After that, these primary expressions will be combined into all other expression
 
 ## TODO
 
-def consistancy
-return pointer
-call function pointer (not allow)
+
+
+array initlist must be const
 
 lost env when final resolve return/param types
 init list for arrays/structures (no nest)
