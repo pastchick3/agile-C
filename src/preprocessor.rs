@@ -1,3 +1,5 @@
+//! The lexer handles `#include`.
+
 use std::fs;
 
 use regex::Regex;
@@ -9,9 +11,7 @@ pub struct Preprocessor<'a> {
     file_name: &'a str,
     source: &'a str,
     errors: &'a mut Vec<Error>,
-    include_regex: Regex,
-    define_regex: Regex,
-    define_pairs: Vec<(Regex, String)>,
+    include_regex: Regex, // regular expression that matches `#include`
 }
 
 impl<'a> Preprocessor<'a> {
@@ -25,21 +25,19 @@ impl<'a> Preprocessor<'a> {
             source,
             errors,
             include_regex: Regex::new("^[[:space:]]*#include[[:space:]]+(\"|<)(.+)(\"|>)").unwrap(),
-            define_regex: Regex::new(
-                "^[[:space:]]*#define[[:space:]]+([[:word:]]+)[[:space:]]+([[:word:]]+)",
-            )
-            .unwrap(),
-            define_pairs: Vec::new(),
         }
     }
 
+    /// Break the source into (file_name, line_index, line).
     pub fn run(&mut self) -> Result<Vec<(String, usize, String)>, ()> {
+        // Break the input file into lines.
         let mut lines: Vec<_> = self
             .source
             .lines()
             .enumerate()
             .map(|(line_index, line)| (self.file_name.to_string(), line_index, line.to_string()))
             .collect();
+        // Recursively include all required files.
         let mut modification = true;
         while modification {
             modification = false;
@@ -49,10 +47,7 @@ impl<'a> Preprocessor<'a> {
                 .flatten()
                 .collect();
         }
-        lines = lines
-            .into_iter()
-            .filter_map(|line| self.define(line))
-            .collect();
+        // Return the result.
         if self.errors.is_empty() {
             Ok(lines)
         } else {
@@ -60,6 +55,7 @@ impl<'a> Preprocessor<'a> {
         }
     }
 
+    /// A helper function to construct preprocessing errors.
     fn push_error(&mut self, message: &str, location: Location) {
         self.errors.push(Error::Preprocessing {
             message: message.to_string(),
@@ -67,6 +63,9 @@ impl<'a> Preprocessor<'a> {
         });
     }
 
+    /// Check if a line contains "#include" directive. If so, expand the
+    /// included file into a vector of new lines. If not, wrap the original
+    /// line into a vector to keep a uniform return type.
     fn include(
         &mut self,
         modification: &mut bool,
@@ -74,10 +73,12 @@ impl<'a> Preprocessor<'a> {
     ) -> Vec<(String, usize, String)> {
         if let Some(caps) = self.include_regex.captures(&line) {
             *modification = true;
+            // Extract the file name.
             let left_delimiter = caps.get(1).unwrap().as_str();
             let included_file_name = caps.get(2).unwrap().as_str();
             let right_delimiter = caps.get(3).unwrap().as_str();
             if left_delimiter == "<" && right_delimiter == ">" {
+                // Include a C standard library.
                 match cstdlib::get_library(included_file_name) {
                     Some(source) => source
                         .lines()
@@ -100,6 +101,7 @@ impl<'a> Preprocessor<'a> {
                     }
                 }
             } else if left_delimiter == "\"" && right_delimiter == "\"" {
+                // Include a normal C file.
                 match fs::read_to_string(included_file_name) {
                     Ok(source) => source
                         .lines()
@@ -119,6 +121,7 @@ impl<'a> Preprocessor<'a> {
                     }
                 }
             } else {
+                // Reject a unbalanced include directive.
                 self.push_error(
                     "Expect `\"file_name\"` or `<file_name>`.",
                     Location::new(&file_name, line_index, 0),
@@ -126,40 +129,8 @@ impl<'a> Preprocessor<'a> {
                 Vec::new()
             }
         } else {
+            // Return a normal line without modifications.
             vec![(file_name, line_index, line)]
-        }
-    }
-
-    fn define(
-        &mut self,
-        (file_name, line_index, line): (String, usize, String),
-    ) -> Option<(String, usize, String)> {
-        if let Some(caps) = self.define_regex.captures(&line) {
-            let name = caps.get(1).unwrap().as_str();
-            let value = caps.get(2).unwrap().as_str();
-            let name_regex = match Regex::new(&format!("([[:space:]])({})([[:space:]]?)", name)) {
-                Ok(name_regex) => name_regex,
-                Err(err) => {
-                    self.push_error(
-                        &format!("Invalid #define name: {}.", err),
-                        Location::new(&file_name, line_index, 0),
-                    );
-                    return None;
-                }
-            };
-            let replace_value = format!("${{1}}{}${{3}}", value);
-            self.define_pairs.push((name_regex, replace_value));
-            None
-        } else {
-            let line = self
-                .define_pairs
-                .iter()
-                .fold(line, |line, (name_regex, replace_value)| {
-                    name_regex
-                        .replace_all(&line, replace_value.as_str())
-                        .to_string()
-                });
-            Some((file_name, line_index, line))
         }
     }
 }
@@ -182,8 +153,8 @@ mod tests {
             path_3
         )
         .expect("Unable to write to file_2.");
-        write!(file_3, "file_3 start\nfile_3 end").expect("Unable to write to file_3.");
-        let source_1 = format!("file_1 start\n#include \"{}\"\nfile_1 end", path_2);
+        write!(file_3, "file_3 start\nfile_3 end\n").expect("Unable to write to file_3.");
+        let source_1 = format!("file_1 start\n#include \"{}\"\nfile_1 end\n", path_2);
         let expected_errors = vec![];
         let expected_lines = vec![
             ("file_1".to_string(), 0, "file_1 start".to_string()),
@@ -196,7 +167,7 @@ mod tests {
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file_1", &source_1, &mut errors)
             .run()
-            .expect("Fail to include.");
+            .unwrap();
         assert_eq!(errors, expected_errors);
         assert_eq!(lines, expected_lines);
     }
@@ -226,18 +197,5 @@ mod tests {
             .run()
             .expect_err("Succeed to unbalanced_include.");
         assert_eq!(errors, expected_errors);
-    }
-
-    #[test]
-    fn define() {
-        let source = "\t#define N 100\nint a_N =\tN;";
-        let expected_errors = vec![];
-        let expected_lines = vec![("file".to_string(), 1, "int a_N =\t100;".to_string())];
-        let mut errors = Vec::new();
-        let lines = Preprocessor::new("file", source, &mut errors)
-            .run()
-            .unwrap();
-        assert_eq!(errors, expected_errors);
-        assert_eq!(lines, expected_lines);
     }
 }

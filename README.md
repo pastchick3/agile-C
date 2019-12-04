@@ -176,7 +176,8 @@ After that, these primary expressions will be combined into all other expression
 
 ## TODO
 
-
+param ...
+param void
 
 array initlist must be const
 
