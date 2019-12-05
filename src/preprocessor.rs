@@ -1,4 +1,4 @@
-//! The lexer handles `#include`.
+//! The preprocessor breaks a source into a vector of lines and expand `#include` properly.
 
 use std::fs;
 
@@ -7,6 +7,7 @@ use regex::Regex;
 use crate::cstdlib;
 use crate::structure::{Error, Location};
 
+/// The preprocessor breaks a source into a vector of lines and expand `#include` properly.
 pub struct Preprocessor<'a> {
     file_name: &'a str,
     source: &'a str,

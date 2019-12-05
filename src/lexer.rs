@@ -1,20 +1,23 @@
-//! A lexer producing a vector of tokens.
+//! The lexer breaks a vector of lines into a vector of tokens.
 
 use crate::structure::{Error, Location, Token};
 use Token::*;
 
-/// A lexer producing a vector of tokens for the parser.
+/// The lexer breaks a vector of lines into a vector of tokens.
 ///
-/// The lexer first records the start location (`start_line_index` and`start_char_index`)
-/// and then scans the source (`line_index` and `char_index`). When a token is produced,
-/// the lexer will slice the source from the start position to the current position.
+/// The lexer first records the start location (`start_line_index`
+/// and `start_char_index`), and then scans the source (`line_index`
+/// and `char_index`). The lexer will slice the source from the start
+/// position to the current position to produce a token.
 pub struct Lexer<'a> {
-    lines: Vec<(String, usize, String)>,
-    start_line_index: usize,
-    line_index: usize,
-    start_char_index: usize,
-    char_index: usize,
-    eof: bool,
+    lines: Vec<(String, usize, String)>, // (file_name, line_index, line)
+    start_line_index: usize,             // the start line index of a token
+    last_line_index: usize,              // last line index, used by `backward_once`
+    line_index: usize,                   // current line index
+    start_char_index: usize,             // the start char index of a token
+    last_char_index: usize,              // last char index, used by `backward_once`
+    char_index: usize,                   // current char index
+    eof: bool,                           // whether the lexer has hitted EOF
     tokens: Option<Vec<Token>>,
     errors: &'a mut Vec<Error>,
 }
@@ -24,8 +27,10 @@ impl<'a> Lexer<'a> {
         Lexer {
             lines,
             start_line_index: 0,
+            last_line_index: 0,
             line_index: 0,
             start_char_index: 0,
+            last_char_index: 0,
             char_index: 0,
             eof: false,
             tokens: Some(Vec::new()),
@@ -33,16 +38,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// breaks a vector of lines into a vector of tokens.
     pub fn run(&mut self) -> Result<Vec<Token>, ()> {
-        // Skip initial empty lines.
-        while self.lines[self.line_index].2.is_empty() {
-            self.line_index += 1;
-        }
-        loop {
-            self.skip_whitespaces();
-            if self.eof {
-                break;
-            }
+        while self.skip_whitespaces() {
             if let Ok(tk) = self.read_token() {
                 self.tokens.as_mut().unwrap().push(tk);
             }
@@ -54,7 +52,13 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn skip_whitespaces(&mut self) {
+    /// Skip whitespaces and return true. Return false if encounter EOF.
+    fn skip_whitespaces(&mut self) -> bool {
+        // Skip initial empty lines.
+        while self.lines[self.line_index].2.is_empty() {
+            self.forward();
+        }
+        // Skip whitespaces.
         while let Some(ch) = self.get_cur_ch() {
             if ch.is_whitespace() {
                 self.forward();
@@ -62,9 +66,11 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
+        // Check for EOF.
+        !self.eof
     }
 
-    /// Notice this function will return `None` only when EOF.
+    /// Return the current charactor or return `None` when EOF.
     fn get_cur_ch(&self) -> Option<char> {
         if self.eof {
             None
@@ -78,23 +84,29 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Slice the source from the start position to the current
+    /// position to get a literal.
     fn get_literal(&self) -> String {
         let mut literal = String::new();
         let mut line_index = self.start_line_index;
         if line_index == self.line_index {
+            // The lexer is still on the same line.
             let (_, _, line) = &self.lines[line_index];
             literal.push_str(&line[self.start_char_index..self.char_index]);
         } else {
+            // Get the first line.
             let (_, _, line) = &self.lines[line_index];
             literal.push_str(&line[self.start_char_index..]);
             literal.push('\n');
             line_index += 1;
+            // Get any intermediate lines.
             while line_index < self.line_index {
                 let (_, _, line) = &self.lines[line_index];
                 literal.push_str(&line);
                 literal.push('\n');
                 line_index += 1;
             }
+            // Get the current line.
             if self.char_index == 0 {
                 literal.pop();
             } else {
@@ -105,6 +117,7 @@ impl<'a> Lexer<'a> {
         literal
     }
 
+    /// Get the current position, using `start_line/char_index`.
     fn get_location(&self) -> Location {
         let file_name = &self.lines[self.start_line_index].0;
         let line_index = self.lines[self.start_line_index].1;
@@ -112,15 +125,20 @@ impl<'a> Lexer<'a> {
         Location::new(file_name, line_index, char_index)
     }
 
-    /// This function will automatically go to the next line to make
-    /// sure `get_cur_ch()` returns `None` only when EOF.
-    fn forward(&mut self) {
+    /// Move forward to the next char. This function will automatically
+    /// go to the next line to make sure `get_cur_ch()` returns `None`
+    /// only when EOF. Return false if encouter EOF.
+    fn forward(&mut self) -> bool {
+        // Update the last position.
+        self.last_line_index = self.line_index;
+        self.last_char_index = self.char_index;
+        // Get the current line.
         let line = &self.lines[self.line_index].2;
-        // Not at the end a line.
         if self.char_index + 1 < line.len() {
+            // Not at the end a line.
             self.char_index += 1;
-        // At the end of a line.
         } else if self.line_index + 1 < self.lines.len() {
+            // At the end of a line.
             self.line_index += 1;
             self.char_index = 0;
             // Skip empty lines.
@@ -132,13 +150,22 @@ impl<'a> Lexer<'a> {
                     break;
                 }
             }
-        // At EOF.
         } else {
+            // Encounter EOF.
             self.char_index += 1;
             self.eof = true;
         }
+        !self.eof
     }
 
+    /// Move backward, but this function can only be called once after
+    /// each `forward()`.
+    fn backward_once(&mut self) {
+        self.line_index = self.last_line_index;
+        self.char_index = self.last_char_index;
+    }
+
+    /// A helper function to construct lexing errors.
     fn push_error(&mut self, message: &str) {
         let location = self.get_location();
         self.errors.push(Error::Lexing {
@@ -147,9 +174,12 @@ impl<'a> Lexer<'a> {
         });
     }
 
+    /// Read a token, and adjust the position to the first unread char.
     fn read_token(&mut self) -> Result<Token, ()> {
+        // Record the starting position.
         self.start_line_index = self.line_index;
         self.start_char_index = self.char_index;
+        // Read a token.
         match self.get_cur_ch() {
             Some('+') => {
                 self.forward();
@@ -201,6 +231,7 @@ impl<'a> Lexer<'a> {
                         Ok(SlashEq(self.get_location()))
                     }
                     Some('/') => {
+                        // Read a single line comment.
                         while !self.eof && self.line_index == self.start_line_index {
                             self.forward();
                         }
@@ -210,32 +241,25 @@ impl<'a> Lexer<'a> {
                         })
                     }
                     Some('*') => {
-                        self.forward();
+                        // Read a multi-line comment.
                         let mut asterisk_flag = false;
-                        if let Some('*') = self.get_cur_ch() {
-                            asterisk_flag = true;
-                        }
-                        self.forward();
-                        loop {
-                            if self.eof {
-                                break;
-                            } else if asterisk_flag && self.get_cur_ch() == Some('/') {
+                        while self.forward() {
+                            if asterisk_flag && self.get_cur_ch() == Some('/') {
                                 self.forward();
                                 break;
-                            } else if asterisk_flag && self.get_cur_ch() != Some('*') {
-                                asterisk_flag = false;
-                                self.forward();
-                            } else if !asterisk_flag && self.get_cur_ch() == Some('*') {
-                                asterisk_flag = true;
-                                self.forward();
                             } else {
-                                self.forward();
+                                asterisk_flag = self.get_cur_ch() == Some('*');
                             }
                         }
-                        Ok(Comment {
-                            literal: self.get_literal(),
-                            location: self.get_location(),
-                        })
+                        if self.eof {
+                            self.push_error("Unexpected EOF.");
+                            Err(())
+                        } else {
+                            Ok(Comment {
+                                literal: self.get_literal(),
+                                location: self.get_location(),
+                            })
+                        }
                     }
                     _ => Ok(Slash(self.get_location())),
                 }
@@ -250,7 +274,6 @@ impl<'a> Lexer<'a> {
                     _ => Ok(Percent(self.get_location())),
                 }
             }
-
             Some('<') => {
                 self.forward();
                 match self.get_cur_ch() {
@@ -345,7 +368,18 @@ impl<'a> Lexer<'a> {
             }
             Some('.') => {
                 self.forward();
-                Ok(Dot(self.get_location()))
+                if let Some('.') = self.get_cur_ch() {
+                    self.forward();
+                    if let Some('.') = self.get_cur_ch() {
+                        self.forward();
+                        Ok(Ellipsis(self.get_location()))
+                    } else {
+                        self.backward_once();
+                        Ok(Dot(self.get_location()))
+                    }
+                } else {
+                    Ok(Dot(self.get_location()))
+                }
             }
             Some(':') => {
                 self.forward();
@@ -355,10 +389,10 @@ impl<'a> Lexer<'a> {
                 self.forward();
                 Ok(Semicolon(self.get_location()))
             }
-            Some(ch) if ch.is_numeric() => self.read_num(),
+            Some(ch) if ch.is_ascii_digit() || ch == '.' => self.read_num(),
             Some('\'') => self.read_char(),
             Some('"') => self.read_str(),
-            Some(ch) if ch.is_ascii_alphanumeric() => self.read_word(),
+            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' => self.read_word(),
             Some(ch) => {
                 self.push_error(&format!("Invalid character `{}`.", ch));
                 Err(())
@@ -367,24 +401,30 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Read a numeric literal.
     fn read_num(&mut self) -> Result<Token, ()> {
-        loop {
+        // Get the raw literal.
+        while self.forward() {
             match self.get_cur_ch() {
-                Some(ch) if ch.is_numeric() || ch == '.' => self.forward(),
+                Some(ch) if ch.is_ascii_alphanumeric() || ch == '.' => (),
                 _ => break,
             }
         }
         let literal = self.get_literal();
+        // Split the raw literal by '.'.
         let literal_vec: Vec<&str> = literal.split('.').collect();
         match literal_vec.len() {
+            // No '.', which is a integer.
             1 => Ok(IntConst {
                 literal,
                 location: self.get_location(),
             }),
-            2 if !literal_vec[0].is_empty() && !literal_vec[1].is_empty() => Ok(FloatConst {
+            // One '.' and something else, which is a floating-point number.
+            2 if literal.len() > 1 => Ok(FloatConst {
                 literal,
                 location: self.get_location(),
             }),
+            // Encounter an invalid number literal.
             _ => {
                 self.push_error(&format!("Invalid number literal `{}`.", literal));
                 Err(())
@@ -399,7 +439,7 @@ impl<'a> Lexer<'a> {
                 Some('\\') => {
                     self.forward();
                     match self.get_cur_ch() {
-                        Some('n') | Some('\'') => self.forward(),
+                        Some('n') | Some('\'') => {self.forward();},
                         _ => {}
                     }
                 }
@@ -407,7 +447,7 @@ impl<'a> Lexer<'a> {
                     self.forward();
                     break;
                 }
-                Some(_) => self.forward(),
+                Some(_) => {self.forward();},
                 None => {
                     self.push_error("Unexpected EOF.");
                     return Err(());
@@ -438,7 +478,7 @@ impl<'a> Lexer<'a> {
                 Some('\\') => {
                     self.forward();
                     match self.get_cur_ch() {
-                        Some('n') | Some('"') => self.forward(),
+                        Some('n') | Some('"') => {self.forward();},
                         _ => {}
                     }
                 }
@@ -446,7 +486,7 @@ impl<'a> Lexer<'a> {
                     self.forward();
                     break;
                 }
-                Some(_) => self.forward(),
+                Some(_) => {self.forward();},
                 None => {
                     self.push_error("Unexpected EOF.");
                     return Err(());
@@ -462,7 +502,7 @@ impl<'a> Lexer<'a> {
     fn read_word(&mut self) -> Result<Token, ()> {
         loop {
             match self.get_cur_ch() {
-                Some(ch) if ch.is_ascii_alphanumeric() => self.forward(),
+                Some(ch) if ch.is_ascii_alphanumeric() => {self.forward();},
                 _ => break,
             }
         }
@@ -481,7 +521,7 @@ impl<'a> Lexer<'a> {
 
             "switch" => Ok(Switch(self.get_location())),
             "case" => Ok(Case(self.get_location())),
-            "default" => Ok(Default(self.get_location())),
+            "default" => Ok(Default_(self.get_location())),
             "if" => Ok(If(self.get_location())),
             "else" => Ok(Else(self.get_location())),
             "do" => Ok(Do(self.get_location())),
@@ -762,7 +802,7 @@ mod tests {
         let expected_tokens = vec![
             Switch(Location::default()),
             Case(Location::default()),
-            Default(Location::default()),
+            Default_(Location::default()),
             If(Location::default()),
             Else(Location::default()),
             Do(Location::default()),
@@ -784,7 +824,7 @@ mod tests {
 
     #[test]
     fn punctuation() {
-        let source = "& . -> , : ;";
+        let source = "& . -> , : ; ...";
         let expected_errors = vec![];
         let expected_tokens = vec![
             Ampersand(Location::default()),
@@ -793,6 +833,7 @@ mod tests {
             Comma(Location::default()),
             Colon(Location::default()),
             Semicolon(Location::default()),
+            Ellipsis(Location::default()),
         ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
@@ -805,14 +846,10 @@ mod tests {
 
     #[test]
     fn error() {
-        let source = "| 1. 1.1.1 \'ab\' \'";
+        let source = "| 1.1.1 \'ab\' \'";
         let expected_errors = vec![
             Error::Lexing {
                 message: "Invalid token `|`.".to_string(),
-                location: Location::default(),
-            },
-            Error::Lexing {
-                message: "Invalid number literal `1.`.".to_string(),
                 location: Location::default(),
             },
             Error::Lexing {

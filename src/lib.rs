@@ -1,14 +1,14 @@
 //! A Type Inference Transpiler for the C Programming Language
 
 mod cstdlib;
-// mod lexer;
+mod lexer;
 // mod parser;
 mod preprocessor;
 // mod resolver;
 // mod serializer;
 mod structure;
 
-// use lexer::Lexer;
+use lexer::Lexer;
 // use parser::Parser;
 use preprocessor::Preprocessor;
 // use resolver::Resolver;
@@ -73,9 +73,9 @@ impl Transpiler {
         let lines = Preprocessor::new(&self.file_name, &self.source, &mut self.errors)
             .run()
             .map_err(|_| self.format_errors())?;
-        // let tokens = Lexer::new(lines, &mut self.errors)
-        //     .run()
-        //     .map_err(|_| self.format_errors())?;
+        let tokens = Lexer::new(lines, &mut self.errors)
+            .run()
+            .map_err(|_| self.format_errors())?;
         // let generic_ast = Parser::new(tokens, &mut self.errors)
         //     .run()
         //     .map_err(|_| self.format_errors())?;
