@@ -392,7 +392,7 @@ impl<'a> Lexer<'a> {
             Some(ch) if ch.is_ascii_digit() || ch == '.' => self.read_num(),
             Some('\'') => self.read_char(),
             Some('"') => self.read_str(),
-            Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' => self.read_word(),
+            Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => self.read_word(),
             Some(ch) => {
                 self.push_error(&format!("Invalid character `{}`.", ch));
                 Err(())
@@ -432,22 +432,20 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Read a character literal, including the single quotation marks.
     fn read_char(&mut self) -> Result<Token, ()> {
-        self.forward();
+        // Read a raw literal which may contain more than one character.
+        let mut slash_flag = false;
         loop {
+            self.forward();
             match self.get_cur_ch() {
-                Some('\\') => {
-                    self.forward();
-                    match self.get_cur_ch() {
-                        Some('n') | Some('\'') => {self.forward();},
-                        _ => {}
-                    }
-                }
-                Some('\'') => {
+                Some('\'') if !slash_flag => {
                     self.forward();
                     break;
                 }
-                Some(_) => {self.forward();},
+                Some(ch) => {
+                    slash_flag = ch == '\\';
+                }
                 None => {
                     self.push_error("Unexpected EOF.");
                     return Err(());
@@ -455,11 +453,14 @@ impl<'a> Lexer<'a> {
             }
         }
         let literal = self.get_literal();
+        // Validate the raw literal.
         match literal.as_str() {
+            // Normal characters.
             ch if ch.len() == 3 && ch.is_ascii() => Ok(CharConst {
                 literal,
                 location: self.get_location(),
             }),
+            // Escaped characters.
             "'\\n'" | "'\\''" => Ok(CharConst {
                 literal,
                 location: self.get_location(),
@@ -471,22 +472,19 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Read a string literal, including the double quotation marks.
     fn read_str(&mut self) -> Result<Token, ()> {
-        self.forward();
+        let mut slash_flag = false;
         loop {
+            self.forward();
             match self.get_cur_ch() {
-                Some('\\') => {
-                    self.forward();
-                    match self.get_cur_ch() {
-                        Some('n') | Some('"') => {self.forward();},
-                        _ => {}
-                    }
-                }
-                Some('"') => {
+                Some('"') if !slash_flag => {
                     self.forward();
                     break;
                 }
-                Some(_) => {self.forward();},
+                Some(ch) => {
+                    slash_flag = ch == '\\';
+                }
                 None => {
                     self.push_error("Unexpected EOF.");
                     return Err(());
@@ -499,14 +497,17 @@ impl<'a> Lexer<'a> {
         })
     }
 
+    /// Read a word literal, and check whether it is a keyword or a identifier.
     fn read_word(&mut self) -> Result<Token, ()> {
-        loop {
+        // Read a word literal.
+        while self.forward() {
             match self.get_cur_ch() {
-                Some(ch) if ch.is_ascii_alphanumeric() => {self.forward();},
+                Some(ch) if ch.is_ascii_alphanumeric() || ch == '_' => (),
                 _ => break,
             }
         }
         let literal = self.get_literal();
+        // Check whether it is a keyword or a identifier.
         match literal.as_str() {
             "T" => Ok(T(self.get_location())),
             "void" => Ok(Void(self.get_location())),
@@ -547,7 +548,7 @@ mod tests {
 
     #[test]
     fn location() {
-        let source = "a b \n \n c \n \n";
+        let source = "\n a b \n \n \t c \n \n";
         let expected_errors = vec![];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
@@ -560,28 +561,28 @@ mod tests {
             Ident { literal, location } => {
                 assert_eq!(literal.as_str(), "a");
                 assert_eq!(location.file_name.as_str(), "file");
-                assert_eq!(location.line_no, 1);
-                assert_eq!(location.char_no, 1);
+                assert_eq!(location.line_no, 2);
+                assert_eq!(location.char_no, 2);
             }
-            _ => panic!(format!("{:?}", tokens[0])),
+            _ => panic!(format!("Unexpected token[0]: {:#?}", tokens[0])),
         }
         match &tokens[1] {
             Ident { literal, location } => {
                 assert_eq!(literal.as_str(), "b");
                 assert_eq!(location.file_name.as_str(), "file");
-                assert_eq!(location.line_no, 1);
-                assert_eq!(location.char_no, 3);
+                assert_eq!(location.line_no, 2);
+                assert_eq!(location.char_no, 4);
             }
-            _ => panic!(format!("{:?}", tokens[1])),
+            _ => panic!(format!("Unexpected token[1]: {:#?}", tokens[1])),
         }
         match &tokens[2] {
             Ident { literal, location } => {
                 assert_eq!(literal.as_str(), "c");
                 assert_eq!(location.file_name.as_str(), "file");
-                assert_eq!(location.line_no, 3);
-                assert_eq!(location.char_no, 2);
+                assert_eq!(location.line_no, 4);
+                assert_eq!(location.char_no, 4);
             }
-            _ => panic!(format!("{:?}", tokens[2])),
+            _ => panic!(format!("Unexpected token[2]: {:#?}", tokens[2])),
         }
     }
 
@@ -683,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn r#type() {
+    fn type_() {
         let source = "T void char short int long float double signed unsigned";
         let expected_errors = vec![];
         let expected_tokens = vec![
@@ -731,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn relational() {
+    fn relationship() {
         let source = "< > <= >= == != && || !";
         let expected_errors = vec![];
         let expected_tokens = vec![

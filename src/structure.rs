@@ -153,7 +153,6 @@ pub enum Token {
     Continue(Location),
     Break(Location),
     Return(Location),
-
     Struct(Location),
 
     Ampersand(Location),
