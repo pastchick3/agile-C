@@ -449,7 +449,7 @@ impl fmt::Display for Type {
 }
 
 impl Type {
-    fn set_array_flag(&self, array_flag: bool) -> Type {
+    pub fn set_array_flag(&self, array_flag: bool) -> Type {
         use Type::*;
 
         match self.clone() {
@@ -565,7 +565,7 @@ impl Type {
         }
     }
 
-    fn get_array_flag(&self) -> bool {
+    pub fn get_array_flag(&self) -> bool {
         use Type::*;
 
         match self.clone() {
@@ -586,7 +586,7 @@ impl Type {
         }
     }
 
-    fn set_pointer_flag(&self, pointer_flag: bool) -> Type {
+    pub fn set_pointer_flag(&self, pointer_flag: bool) -> Type {
         use Type::*;
 
         match self.clone() {
@@ -702,7 +702,7 @@ impl Type {
         }
     }
 
-    fn get_pointer_flag(&self) -> bool {
+    pub fn get_pointer_flag(&self) -> bool {
         use Type::*;
 
         match self.clone() {
@@ -1240,6 +1240,7 @@ pub struct Function {
     pub return_type: Rc<RefCell<Type>>,
     pub name: String,
     pub parameters: IndexMap<String, Rc<RefCell<Type>>>,
+    pub ellipsis: bool, // whether the parameter list contains an ellipsis
     pub body: Statement,
     pub location: Location,
 }

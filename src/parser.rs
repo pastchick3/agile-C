@@ -7,8 +7,7 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 
 use crate::structure::{
-    Array, Error, Expression, Function, Locate, Location, Pointer, Statement, StaticObject, Token,
-    Type,
+    Error, Expression, Function, Locate, Location, Statement, StaticObject, Token, Type,
 };
 
 /// A structure containg names defined in different scopes.
@@ -227,10 +226,10 @@ impl<'a> Parser<'a> {
             }
         };
         // Parse the return type.
-        let mut r#type = self.parse_type()?;
+        let mut type_ = self.parse_type()?;
         if let Some(Token::Asterisk(_)) = self.tokens.last() {
             self.tokens.pop();
-            r#type = r#type.set_pointer_flag(true);
+            type_ = type_.set_pointer_flag(true);
         }
         // Parse the function name.
         let name = match self.tokens.pop() {
@@ -257,12 +256,19 @@ impl<'a> Parser<'a> {
             }
         }
         let mut parameters = IndexMap::new();
+        let mut ellipsis = false;
         match self.tokens.last() {
             Some(Token::RParen(_)) => {
                 self.tokens.pop();
             }
             _ => loop {
-                let r#type = self.parse_type()?;
+                if let Some(Token::Ellipsis(_)) = self.tokens.last() {
+                    self.tokens.pop();
+                    ellipsis = true;
+                    self.assert_token("RParen")?;
+                    break;
+                }
+                let type_ = self.parse_type()?;
                 let (name, location) = match self.tokens.pop() {
                     Some(Token::Ident { literal, location }) => {
                         self.environment.define(&literal);
@@ -281,7 +287,7 @@ impl<'a> Parser<'a> {
                     self.push_error("Duplicate parameters.", location);
                     return Err(());
                 } else {
-                    parameters.insert(name, Rc::new(RefCell::new(r#type)));
+                    parameters.insert(name, Rc::new(RefCell::new(type_)));
                 }
                 match self.tokens.pop() {
                     Some(Token::Comma(_)) => {}
@@ -303,9 +309,10 @@ impl<'a> Parser<'a> {
         self.environment.leave();
         // Return the function node.
         Ok(Function {
-            return_type: Rc::new(RefCell::new(r#type)),
+            return_type: Rc::new(RefCell::new(type_)),
             name,
             parameters,
+            ellipsis,
             body,
             location,
         })
@@ -315,78 +322,62 @@ impl<'a> Parser<'a> {
         match self.tokens.pop() {
             Some(Token::T(location)) => Ok(Type::T {
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
                 specialized: None,
             }),
-            Some(Token::Void(location)) => Ok(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location,
-            }),
+            Some(Token::Void(location)) => Ok(Type::Void(Some(location))),
             Some(Token::Char(location)) => Ok(Type::Char {
-                num_flag: false,
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
             }),
             Some(Token::Short(location)) => Ok(Type::Short {
                 signed_flag: true,
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
             }),
             Some(Token::Int(location)) => Ok(Type::Int {
                 signed_flag: true,
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
             }),
             Some(Token::Long(location)) => Ok(Type::Long {
                 signed_flag: true,
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
             }),
             Some(Token::Float(location)) => Ok(Type::Float {
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
             }),
             Some(Token::Double(location)) => Ok(Type::Double {
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
             }),
             Some(Token::Signed(location)) => match self.tokens.pop() {
                 Some(Token::Short(_)) => Ok(Type::Short {
                     signed_flag: true,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location,
+                    location: Some(location),
                 }),
                 Some(Token::Int(_)) => Ok(Type::Int {
                     signed_flag: true,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location,
+                    location: Some(location),
                 }),
                 Some(Token::Long(_)) => Ok(Type::Long {
                     signed_flag: true,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location,
+                    location: Some(location),
                 }),
                 Some(tk) => {
                     self.push_error(
@@ -405,23 +396,20 @@ impl<'a> Parser<'a> {
                 Some(Token::Short(_)) => Ok(Type::Short {
                     signed_flag: false,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location,
+                    location: Some(location),
                 }),
                 Some(Token::Int(_)) => Ok(Type::Int {
                     signed_flag: false,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location,
+                    location: Some(location),
                 }),
                 Some(Token::Long(_)) => Ok(Type::Long {
                     signed_flag: false,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location,
+                    location: Some(location),
                 }),
                 Some(tk) => {
                     self.push_error(
@@ -441,9 +429,8 @@ impl<'a> Parser<'a> {
                 self.tokens.push(tk);
                 Ok(Type::T {
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location: Location::default(),
+                    location: None,
                     specialized: None,
                 })
             }
@@ -467,7 +454,7 @@ impl<'a> Parser<'a> {
                     self.tokens.pop();
                     break;
                 }
-                let (member, r#type) = match self.parse_statement()? {
+                let (member, type_) = match self.parse_statement()? {
                     Statement::Def {
                         mut declarators, ..
                     } => {
@@ -487,7 +474,7 @@ impl<'a> Parser<'a> {
                         return Err(());
                     }
                 };
-                members.insert(member.to_string(), r#type);
+                members.insert(member.to_string(), type_);
                 match self.tokens.pop() {
                     Some(Token::RBrace(_)) => break,
                     Some(tk) => self.tokens.push(tk),
@@ -501,9 +488,8 @@ impl<'a> Parser<'a> {
                 name: name.clone(),
                 members,
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location,
+                location: Some(location),
             };
             self.environment.define_struct(&name, struct_.clone());
             Ok(struct_)
@@ -526,18 +512,18 @@ impl<'a> Parser<'a> {
             Some(Token::If(loc)) => self.parse_statement_if(loc),
             Some(Token::Switch(loc)) => self.parse_statement_switch(loc),
 
-            Some(r#type @ Token::T(_))
-            | Some(r#type @ Token::Void(_))
-            | Some(r#type @ Token::Char(_))
-            | Some(r#type @ Token::Short(_))
-            | Some(r#type @ Token::Int(_))
-            | Some(r#type @ Token::Long(_))
-            | Some(r#type @ Token::Float(_))
-            | Some(r#type @ Token::Double(_))
-            | Some(r#type @ Token::Signed(_))
-            | Some(r#type @ Token::Unsigned(_))
-            | Some(r#type @ Token::Struct(_)) => {
-                self.tokens.push(r#type);
+            Some(type_ @ Token::T(_))
+            | Some(type_ @ Token::Void(_))
+            | Some(type_ @ Token::Char(_))
+            | Some(type_ @ Token::Short(_))
+            | Some(type_ @ Token::Int(_))
+            | Some(type_ @ Token::Long(_))
+            | Some(type_ @ Token::Float(_))
+            | Some(type_ @ Token::Double(_))
+            | Some(type_ @ Token::Signed(_))
+            | Some(type_ @ Token::Unsigned(_))
+            | Some(type_ @ Token::Struct(_)) => {
+                self.tokens.push(type_);
                 self.parse_statement_def()
             }
 
@@ -741,7 +727,7 @@ impl<'a> Parser<'a> {
                     loop {
                         match self.tokens.last() {
                             Some(Token::Case(_))
-                            | Some(Token::Default(_))
+                            | Some(Token::Default_(_))
                             | Some(Token::RBrace(_)) => break,
                             _ => stmts.push(self.parse_statement()?),
                         }
@@ -749,7 +735,7 @@ impl<'a> Parser<'a> {
                     branches.push((expr, stmts));
                 }
                 // Parse `default`.
-                Some(tk @ Token::Default(_)) => {
+                Some(tk @ Token::Default_(_)) => {
                     if default.is_some() {
                         self.push_error("Multiple default.", tk.locate());
                         return Err(());
@@ -760,7 +746,7 @@ impl<'a> Parser<'a> {
                     loop {
                         match self.tokens.last() {
                             Some(Token::Case(_))
-                            | Some(Token::Default(_))
+                            | Some(Token::Default_(_))
                             | Some(Token::RBrace(_)) => break,
                             _ => stmts.push(self.parse_statement()?),
                         }
@@ -788,8 +774,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement_def(&mut self) -> Result<Statement, ()> {
-        let r#type = self.parse_type().map_err(|_| self.skip_to_semicolon())?;
-        let location = r#type.locate();
+        let type_ = self.parse_type().map_err(|_| self.skip_to_semicolon())?;
+        let location = type_.locate();
         let mut declarators = Vec::new();
         loop {
             // Parse the delimiter.
@@ -812,32 +798,31 @@ impl<'a> Parser<'a> {
             }
             match self.tokens.pop() {
                 Some(Token::Ident { literal, .. }) => {
-                    let mut r#type = r#type.set_pointer_flag(pointer_flag);
+                    let mut type_ = type_.set_pointer_flag(pointer_flag);
                     self.environment.define(&literal);
                     // Check for array types.
                     if let Some(Token::LBracket(_)) = self.tokens.last() {
                         self.tokens.pop();
-                        let array_len = match self.tokens.last() {
-                            Some(Token::RBracket(_)) => None,
+                        match self.tokens.last() {
+                            Some(Token::RBracket(_)) => (),
                             _ => {
                                 let expr = self
                                     .parse_expression(0)
                                     .map_err(|_| self.skip_to_semicolon())?;
                                 match expr {
-                                    Expression::IntConst { value, .. } => Some(value as usize),
+                                    Expression::IntConst { .. } => (),
                                     expr => {
                                         self.push_error(
                                             "Expect a integral literal.",
                                             expr.locate(),
                                         );
-                                        None
                                     }
                                 }
                             }
                         };
                         self.assert_token("RBracket")
                             .map_err(|_| self.skip_to_semicolon())?;
-                        r#type = r#type.set_array(true, array_len);
+                        type_ = type_.set_array_flag(true);
                     }
                     // Parse the initializer.
                     let initializer = if let Some(Token::Equal(_)) = self.tokens.last() {
@@ -850,7 +835,7 @@ impl<'a> Parser<'a> {
                     } else {
                         None
                     };
-                    declarators.push((Rc::new(RefCell::new(r#type)), literal, initializer));
+                    declarators.push((Rc::new(RefCell::new(type_)), literal, initializer));
                 }
                 Some(tk) => {
                     self.push_error("Expect a identifier.", tk.locate());
@@ -861,7 +846,7 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(Statement::Def {
-            base_type: Rc::new(RefCell::new(r#type)),
+            base_type: Rc::new(RefCell::new(type_)),
             declarators,
             location,
         })
@@ -883,16 +868,15 @@ impl<'a> Parser<'a> {
             if let Expression::Ident { value, location } = *left {
                 if !self.environment.is_defined(&value) {
                     self.environment.define(&value);
-                    let r#type = Type::T {
+                    let type_ = Type::T {
                         array_flag: false,
-                        array_len: None,
                         pointer_flag: false,
-                        location: Location::default(),
+                        location: None,
                         specialized: None,
                     };
                     Ok(Statement::Def {
-                        base_type: Rc::new(RefCell::new(r#type.clone())),
-                        declarators: vec![(Rc::new(RefCell::new(r#type)), value, Some(*right))],
+                        base_type: Rc::new(RefCell::new(type_.clone())),
+                        declarators: vec![(Rc::new(RefCell::new(type_)), value, Some(*right))],
                         location,
                     })
                 } else {
@@ -900,6 +884,33 @@ impl<'a> Parser<'a> {
                         left: Box::new(Expression::Ident { value, location }),
                         operator: "=",
                         right,
+                    }))
+                }
+            } else if let Expression::Index { expression, index } = *left {
+                if let Expression::Ident {value, location} = *expression {
+                    if !self.environment.is_defined(&value) {
+                        self.environment.define(&value);
+                        let type_ = Type::T {
+                            array_flag: false,
+                            pointer_flag: false,
+                            location: None,
+                            specialized: None,
+                        };
+                        Ok(Statement::Def {
+                            base_type: Rc::new(RefCell::new(type_.clone())),
+                            declarators: vec![(Rc::new(RefCell::new(type_.set_array_flag(true))), value, Some(*right))],
+                            location,
+                        })
+                    } else {
+                        Ok(Statement::Expr(Expression::Index {
+                            expression: Box::new(Expression::Ident { value, location }),
+                            index,
+                        }))
+                    }
+                } else {
+                    Ok(Statement::Expr(Expression::Index {
+                        expression,
+                        index,
                     }))
                 }
             } else {
@@ -1034,6 +1045,10 @@ impl<'a> Parser<'a> {
                     expression: Box::new(expr),
                     location,
                 })
+            }
+            Some(Token::LBrace(loc)) => {
+                self.tokens.push(Token::LBrace(loc));
+                self.parse_expression_init_list()
             }
             Some(tk) => {
                 self.push_error("Expect a prefix operator.", tk.locate());
@@ -1239,16 +1254,15 @@ mod tests {
     }
 
     #[test]
-    fn r#struct() {
+    fn structure() {
         let source = "struct A {};";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Type(Type::Struct {
             name: "A".to_string(),
             members: IndexMap::new(),
             array_flag: false,
-            array_len: None,
             pointer_flag: false,
-            location: Location::default(),
+            location: Some(Location::default()),
         })];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
@@ -1268,12 +1282,12 @@ mod tests {
             return_type: Rc::new(RefCell::new(Type::Int {
                 signed_flag: true,
                 array_flag: false,
-                array_len: None,
                 pointer_flag: true,
-                location: Location::default(),
+                location: Some(Location::default()),
             })),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![],
                 location: Location::default(),
@@ -1295,14 +1309,35 @@ mod tests {
         let source = "void f() {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
+    fn function_ellipsis() {
+        let source = "void f(...) {}";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: true,
             body: Statement::Block {
                 statements: vec![],
                 location: Location::default(),
@@ -1324,26 +1359,21 @@ mod tests {
         let source = "void f(int a) {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: [(
                 "a".to_string(),
                 Rc::new(RefCell::new(Type::Int {
                     signed_flag: true,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location: Location::default(),
+                    location: Some(Location::default()),
                 })),
             )]
             .iter()
             .cloned()
             .collect(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![],
                 location: Location::default(),
@@ -1364,19 +1394,15 @@ mod tests {
     fn function_multiple() {
         let source = "
             void f() {}
-            void f(int a, int b) {}
+            void f(int a, int b, ...) {}
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![
             StaticObject::Function(Box::new(Function {
-                return_type: Rc::new(RefCell::new(Type::Void {
-                    array_flag: false,
-                    array_len: None,
-                    pointer_flag: false,
-                    location: Location::default(),
-                })),
+                return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
                 name: "f".to_string(),
                 parameters: IndexMap::new(),
+                ellipsis: false,
                 body: Statement::Block {
                     statements: vec![],
                     location: Location::default(),
@@ -1384,12 +1410,7 @@ mod tests {
                 location: Location::default(),
             })),
             StaticObject::Function(Box::new(Function {
-                return_type: Rc::new(RefCell::new(Type::Void {
-                    array_flag: false,
-                    array_len: None,
-                    pointer_flag: false,
-                    location: Location::default(),
-                })),
+                return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
                 name: "f".to_string(),
                 parameters: [
                     (
@@ -1397,9 +1418,8 @@ mod tests {
                         Rc::new(RefCell::new(Type::Int {
                             signed_flag: true,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                     ),
                     (
@@ -1407,15 +1427,15 @@ mod tests {
                         Rc::new(RefCell::new(Type::Int {
                             signed_flag: true,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                     ),
                 ]
                 .iter()
                 .cloned()
                 .collect(),
+                ellipsis: true,
                 body: Statement::Block {
                     statements: vec![],
                     location: Location::default(),
@@ -1440,14 +1460,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Null(Location::default()),
             location: Location::default(),
         }))];
@@ -1466,14 +1482,10 @@ mod tests {
         let source = "void f() { continue; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![Statement::Continue(Location::default())],
                 location: Location::default(),
@@ -1495,14 +1507,10 @@ mod tests {
         let source = "void f() { break; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![Statement::Break(Location::default())],
                 location: Location::default(),
@@ -1529,14 +1537,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::Return {
@@ -1583,31 +1587,25 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::T {
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                             specialized: None,
                         })),
                         declarators: vec![
                             (
                                 Rc::new(RefCell::new(Type::T {
                                     array_flag: false,
-                                    array_len: None,
                                     pointer_flag: false,
-                                    location: Location::default(),
+                                    location: Some(Location::default()),
                                     specialized: None,
                                 })),
                                 "a".to_string(),
@@ -1619,9 +1617,8 @@ mod tests {
                             (
                                 Rc::new(RefCell::new(Type::T {
                                     array_flag: false,
-                                    array_len: None,
                                     pointer_flag: false,
-                                    location: Location::default(),
+                                    location: Some(Location::default()),
                                     specialized: None,
                                 })),
                                 "a".to_string(),
@@ -1632,19 +1629,15 @@ mod tests {
                     },
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::Char {
-                            num_flag: false,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Char {
-                                num_flag: false,
                                 array_flag: true,
-                                array_len: Some(1),
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             None,
@@ -1655,17 +1648,15 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::Short {
                             signed_flag: true,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Short {
                                 signed_flag: true,
                                 array_flag: true,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             Some(Expression::InitList {
@@ -1685,17 +1676,15 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::Short {
                             signed_flag: false,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Short {
                                 signed_flag: false,
                                 array_flag: true,
-                                array_len: Some(1),
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             Some(Expression::InitList {
@@ -1715,17 +1704,15 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::Int {
                             signed_flag: true,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Int {
                                 signed_flag: true,
                                 array_flag: true,
-                                array_len: Some(2),
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             Some(Expression::InitList {
@@ -1754,17 +1741,15 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::Int {
                             signed_flag: false,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Int {
                                 signed_flag: false,
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: true,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             None,
@@ -1775,17 +1760,15 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::Long {
                             signed_flag: true,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Long {
                                 signed_flag: true,
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: true,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             Some(Expression::Prefix {
@@ -1803,17 +1786,15 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::Long {
                             signed_flag: false,
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Long {
                                 signed_flag: false,
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             Some(Expression::Prefix {
@@ -1830,16 +1811,14 @@ mod tests {
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::Float {
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Float {
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             None,
@@ -1849,16 +1828,14 @@ mod tests {
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::Double {
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Double {
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             Some(Expression::IntConst {
@@ -1900,14 +1877,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::Def {
@@ -1915,18 +1888,16 @@ mod tests {
                             name: "A".to_string(),
                             members: IndexMap::new(),
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Struct {
                                 name: "A".to_string(),
                                 members: IndexMap::new(),
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "a".to_string(),
                             None,
@@ -1941,18 +1912,16 @@ mod tests {
                                 Type::Int {
                                     signed_flag: true,
                                     array_flag: false,
-                                    array_len: None,
                                     pointer_flag: false,
-                                    location: Location::default(),
+                                    location: Some(Location::default()),
                                 },
                             )]
                             .iter()
                             .cloned()
                             .collect(),
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Struct {
@@ -1962,18 +1931,16 @@ mod tests {
                                     Type::Int {
                                         signed_flag: true,
                                         array_flag: false,
-                                        array_len: None,
                                         pointer_flag: false,
-                                        location: Location::default(),
+                                        location: Some(Location::default()),
                                     },
                                 )]
                                 .iter()
                                 .cloned()
                                 .collect(),
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "b".to_string(),
                             Some(Expression::InitList {
@@ -1998,18 +1965,16 @@ mod tests {
                                     Type::Int {
                                         signed_flag: true,
                                         array_flag: false,
-                                        array_len: None,
                                         pointer_flag: false,
-                                        location: Location::default(),
+                                        location: Some(Location::default()),
                                     },
                                 ),
                                 (
                                     "b".to_string(),
                                     Type::Float {
                                         array_flag: false,
-                                        array_len: None,
                                         pointer_flag: false,
-                                        location: Location::default(),
+                                        location: Some(Location::default()),
                                     },
                                 ),
                             ]
@@ -2017,9 +1982,8 @@ mod tests {
                             .cloned()
                             .collect(),
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Struct {
@@ -2030,18 +1994,16 @@ mod tests {
                                         Type::Int {
                                             signed_flag: true,
                                             array_flag: false,
-                                            array_len: None,
                                             pointer_flag: false,
-                                            location: Location::default(),
+                                            location: Some(Location::default()),
                                         },
                                     ),
                                     (
                                         "b".to_string(),
                                         Type::Float {
                                             array_flag: false,
-                                            array_len: None,
                                             pointer_flag: false,
-                                            location: Location::default(),
+                                            location: Some(Location::default()),
                                         },
                                     ),
                                 ]
@@ -2049,9 +2011,8 @@ mod tests {
                                 .cloned()
                                 .collect(),
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             "c".to_string(),
                             Some(Expression::InitList {
@@ -2081,9 +2042,8 @@ mod tests {
                             name: "D".to_string(),
                             members: IndexMap::new(),
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: Some(Location::default()),
                         })),
                         declarators: vec![],
                         location: Location::default(),
@@ -2112,14 +2072,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![Statement::While {
                     condition: Expression::IntConst {
@@ -2152,14 +2108,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![Statement::Do {
                     condition: Expression::IntConst {
@@ -2194,26 +2146,21 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: [(
                 "a".to_string(),
                 Rc::new(RefCell::new(Type::Int {
                     signed_flag: true,
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location: Location::default(),
+                    location: Some(Location::default()),
                 })),
             )]
             .iter()
             .cloned()
             .collect(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::For {
@@ -2254,17 +2201,15 @@ mod tests {
                             base_type: Rc::new(RefCell::new(Type::Int {
                                 signed_flag: true,
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: Some(Location::default()),
                             })),
                             declarators: vec![(
                                 Rc::new(RefCell::new(Type::Int {
                                     signed_flag: true,
                                     array_flag: false,
-                                    array_len: None,
                                     pointer_flag: false,
-                                    location: Location::default(),
+                                    location: Some(Location::default()),
                                 })),
                                 "b".to_string(),
                                 Some(Expression::IntConst {
@@ -2313,14 +2258,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::If {
@@ -2372,14 +2313,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::Switch {
@@ -2449,14 +2386,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::Expr(Expression::Ident {
@@ -2503,14 +2436,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::IntConst {
@@ -2598,14 +2527,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::Infix {
@@ -2694,14 +2619,10 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![Statement::Expr(Expression::Infix {
                     left: Box::new(Expression::IntConst {
@@ -2765,14 +2686,10 @@ mod tests {
         }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void {
-                array_flag: false,
-                array_len: None,
-                pointer_flag: false,
-                location: Location::default(),
-            })),
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::Expr(Expression::Index {
@@ -2856,15 +2773,15 @@ mod tests {
             f(a) {
                 a = 1;
                 b = 1;
+                c[1] = { 1 }; // allow empty index
             }
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
             return_type: Rc::new(RefCell::new(Type::T {
                 array_flag: false,
-                array_len: None,
                 pointer_flag: false,
-                location: Location::default(),
+                location: None,
                 specialized: None,
             })),
             name: "f".to_string(),
@@ -2872,15 +2789,15 @@ mod tests {
                 "a".to_string(),
                 Rc::new(RefCell::new(Type::T {
                     array_flag: false,
-                    array_len: None,
                     pointer_flag: false,
-                    location: Location::default(),
+                    location: None,
                     specialized: None,
                 })),
             )]
             .iter()
             .cloned()
             .collect(),
+            ellipsis: false,
             body: Statement::Block {
                 statements: vec![
                     Statement::Expr(Expression::Infix {
@@ -2897,22 +2814,47 @@ mod tests {
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::T {
                             array_flag: false,
-                            array_len: None,
                             pointer_flag: false,
-                            location: Location::default(),
+                            location: None,
                             specialized: None,
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::T {
                                 array_flag: false,
-                                array_len: None,
                                 pointer_flag: false,
-                                location: Location::default(),
+                                location: None,
                                 specialized: None,
                             })),
                             "b".to_string(),
                             Some(Expression::IntConst {
                                 value: 1,
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T {
+                            array_flag: false,
+                            pointer_flag: false,
+                            location: None,
+                            specialized: None,
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: true,
+                                pointer_flag: false,
+                                location: None,
+                                specialized: None,
+                            })),
+                            "c".to_string(),
+                            Some(Expression::InitList {
+                                pairs: vec![
+                                    (None, Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    })
+                                ],
                                 location: Location::default(),
                             }),
                         )],

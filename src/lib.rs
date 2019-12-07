@@ -2,14 +2,14 @@
 
 mod cstdlib;
 mod lexer;
-// mod parser;
+mod parser;
 mod preprocessor;
 // mod resolver;
 // mod serializer;
 mod structure;
 
 use lexer::Lexer;
-// use parser::Parser;
+use parser::Parser;
 use preprocessor::Preprocessor;
 // use resolver::Resolver;
 // use serializer::Serializer;
@@ -76,9 +76,9 @@ impl Transpiler {
         let tokens = Lexer::new(lines, &mut self.errors)
             .run()
             .map_err(|_| self.format_errors())?;
-        // let generic_ast = Parser::new(tokens, &mut self.errors)
-        //     .run()
-        //     .map_err(|_| self.format_errors())?;
+        let generic_ast = Parser::new(tokens, &mut self.errors)
+            .run()
+            .map_err(|_| self.format_errors())?;
         // let ast = Resolver::new(generic_ast, &mut self.errors)
         //     .run()
         //     .map_err(|_| self.format_errors())?;

@@ -243,23 +243,26 @@ impl<'a> Lexer<'a> {
                     Some('*') => {
                         // Read a multi-line comment.
                         let mut asterisk_flag = false;
-                        while self.forward() {
-                            if asterisk_flag && self.get_cur_ch() == Some('/') {
-                                self.forward();
-                                break;
-                            } else {
-                                asterisk_flag = self.get_cur_ch() == Some('*');
+                        loop {
+                            self.forward();
+                            match self.get_cur_ch() {
+                                Some('/') if asterisk_flag => {
+                                    self.forward();
+                                    break;
+                                }
+                                Some(ch) => {
+                                    asterisk_flag = ch == '*';
+                                }
+                                None => {
+                                    self.push_error("Unexpected EOF.");
+                                    return Err(());
+                                }
                             }
                         }
-                        if self.eof {
-                            self.push_error("Unexpected EOF.");
-                            Err(())
-                        } else {
-                            Ok(Comment {
-                                literal: self.get_literal(),
-                                location: self.get_location(),
-                            })
-                        }
+                        Ok(Comment {
+                            literal: self.get_literal(),
+                            location: self.get_location(),
+                        })
                     }
                     _ => Ok(Slash(self.get_location())),
                 }
