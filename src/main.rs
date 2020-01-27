@@ -7,7 +7,7 @@ use structopt::StructOpt;
 
 use agile_c::Transpiler;
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt)]
 #[structopt(name = "agile_c")]
 struct Opt {
     /// The path to the input file.
@@ -20,6 +20,7 @@ struct Opt {
 }
 
 fn main() {
+    // Process command line arguments.
     let opt = Opt::from_args();
     // Read the input file as a string.
     let source = fs::read_to_string(&opt.input).unwrap_or_else(|err| {
@@ -27,14 +28,8 @@ fn main() {
         process::exit(1);
     });
     // Extract the file name of the input file.
-    let no_file_name_msg = format!("{}: No file name.", "Input File Error".red());
-    let invalid_file_name_msg = format!("{}: Invalid file name.", "Input File Error".red());
-    let file_name = opt
-        .input
-        .file_name()
-        .expect(&no_file_name_msg)
-        .to_str()
-        .expect(&invalid_file_name_msg);
+    // We directly unwrap results because we have succesfully opened the file.
+    let file_name = opt.input.file_name().unwrap().to_str().unwrap();
     // Construct the transpiler.
     let mut transpiler = Transpiler::new(file_name, &source).unwrap_or_else(|err| {
         eprintln!("{}: {}", "Transpiler Error".red(), err);

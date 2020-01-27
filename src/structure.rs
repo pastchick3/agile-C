@@ -1,5 +1,3 @@
-//! Basic structures which will be used among multiple modules.
-
 use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::fmt;
@@ -9,7 +7,7 @@ use std::rc::Rc;
 use colored::*;
 use indexmap::IndexMap;
 
-/// Represent all possible errors may occur during the transpilation.
+/// Represent all errors that may occur during the transpilation.
 #[derive(Debug, PartialEq)]
 pub enum Error {
     Preprocessing { message: String, location: Location },
@@ -20,23 +18,21 @@ pub enum Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use Error::*;
-
         match self {
-            Preprocessing { message, location } => write!(
+            Error::Preprocessing { message, location } => write!(
                 f,
                 "{} {}: {}",
                 location,
                 "Preprocessing Error".red(),
                 message
             ),
-            Lexing { message, location } => {
+            Error::Lexing { message, location } => {
                 write!(f, "{} {}: {}", location, "Lexing Error".red(), message)
             }
-            Parsing { message, location } => {
+            Error::Parsing { message, location } => {
                 write!(f, "{} {}: {}", location, "Parsing Error".red(), message)
             }
-            Resolving { message, location } => {
+            Error::Resolving { message, location } => {
                 write!(f, "{} {}: {}", location, "Resolving Error".red(), message)
             }
         }
@@ -47,12 +43,13 @@ impl fmt::Display for Error {
 #[derive(Debug, Clone, Eq, Default)]
 pub struct Location {
     pub file_name: String,
-    pub line_no: usize, // start from 1
-    pub char_no: usize, // start from 1
+    pub line_no: usize,
+    pub char_no: usize,
 }
 
 impl Location {
     pub fn new(file_name: &str, line_index: usize, char_index: usize) -> Location {
+        // All `*_index` starts from 0, and all `*_no` starts from 1.
         Location {
             file_name: file_name.to_string(),
             line_no: line_index + 1,
@@ -67,24 +64,23 @@ impl fmt::Display for Location {
     }
 }
 
-/// `Location` will never be directly compared, and we want other
-/// structures which only different in `Location` to be compared equal.
+/// All `Location` will be compared equal, because they will never be directly
+/// compared, but we want other structures which only different in `Location`
+/// to be compared equal.
 impl PartialEq for Location {
-    fn eq(&self, _other: &Self) -> bool {
+    fn eq(&self, _: &Self) -> bool {
         true
     }
 }
 
 /// Since we implement `PartialEq`, we cannot derive `Hash`.
-/// Instead We must implement both `PartialEq` and `Hash` to uphold
+/// Instead We (emptily) implement `Hash` to uphold the property
 /// `k1 == k2 -> hash(k1) == hash(k2)`
 impl Hash for Location {
     fn hash<H: Hasher>(&self, _: &mut H) {}
 }
 
-/// Types that can locate itself in the source file.
-///
-/// `Token`, `Type`, `Expression`, `Statement`, and `Function` implement this trait.
+/// Traits for types that can locate itself in the source file.
 pub trait Locate {
     fn locate(&self) -> Location;
 }
@@ -99,7 +95,7 @@ pub enum Token {
     StrConst { literal: String, location: Location },
     Comment { literal: String, location: Location },
 
-    T(Location), // generic type for internal usage only
+    T(Location), // a generic type for internal usages only
     Void(Location),
     Char(Location),
     Short(Location),
@@ -205,7 +201,7 @@ pub enum TypeRelationship {
 
 /// AST nodes for types.
 ///
-/// Please refer to the README file for the type hierarchy.
+/// Please refer to the README file for the complete type hierarchy.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Any,
@@ -213,57 +209,55 @@ pub enum Type {
     AnyRef,
     Null,
     T {
+        pointer_flag: bool, // whether it is a pointer type
         array_flag: bool,   // whether it is a array type
-        pointer_flag: bool, // whether it is a array type
-        location: Option<Location>,
         specialized: Option<Box<Type>>, // whether it has been specialized to a concrete type
+    },
+    Byte {
+        pointer_flag: bool,
+        array_flag: bool,
     },
     Void(Option<Location>),
     Char {
-        array_flag: bool,
         pointer_flag: bool,
-        location: Option<Location>,
-    },
-    Byte {
         array_flag: bool,
-        pointer_flag: bool,
-        location: Option<Location>,
-    },
-    Short {
-        signed_flag: bool,
-        array_flag: bool,
-        pointer_flag: bool,
-        location: Option<Location>,
-    },
-    Int {
-        signed_flag: bool,
-        array_flag: bool,
-        pointer_flag: bool,
-        location: Option<Location>,
-    },
-    Long {
-        signed_flag: bool,
-        array_flag: bool,
-        pointer_flag: bool,
-        location: Option<Location>,
-    },
-    Float {
-        array_flag: bool,
-        pointer_flag: bool,
-        location: Option<Location>,
-    },
-    Double {
-        array_flag: bool,
-        pointer_flag: bool,
         location: Option<Location>,
     },
     Struct {
         name: String,
         members: IndexMap<String, Type>,
-        array_flag: bool,
         pointer_flag: bool,
+        array_flag: bool,
         location: Option<Location>,
     },
+    Short {
+        signed_flag: bool,
+        pointer_flag: bool,
+        array_flag: bool,
+        location: Option<Location>,
+    },
+    Int {
+        signed_flag: bool,
+        pointer_flag: bool,
+        array_flag: bool,
+        location: Option<Location>,
+    },
+    Long {
+        signed_flag: bool,
+        pointer_flag: bool,
+        array_flag: bool,
+        location: Option<Location>,
+    },
+    Float {
+        pointer_flag: bool,
+        array_flag: bool,
+        location: Option<Location>,
+    },
+    Double {
+        pointer_flag: bool,
+        array_flag: bool,
+        location: Option<Location>,
+    }
 }
 
 impl Locate for Type {
@@ -271,17 +265,16 @@ impl Locate for Type {
         use Type::*;
 
         match self {
-            Any | Nothing | AnyRef | Null => panic!("Try to locate a dummy type."),
-            T { location, .. }
-            | Void(location)
+            Any | Nothing | AnyRef | Null | T {..} | Byte {..} => panic!("Try to locate a dummy type."),
+            Void(location)
             | Char { location, .. }
-            | Byte { location, .. }
+            | Struct { location, .. }
             | Short { location, .. }
             | Int { location, .. }
             | Long { location, .. }
             | Float { location, .. }
             | Double { location, .. }
-            | Struct { location, .. } => location.clone().expect("Try to locate a dummy type."),
+             => location.clone().expect("Try to locate a dummy type."),
         }
     }
 }
@@ -290,8 +283,8 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Type::*;
 
-        let array_marker = |&flag| if flag { "[]" } else { "" };
         let pointer_marker = |&flag| if flag { "*" } else { "" };
+        let array_marker = |&flag| if flag { "[]" } else { "" };
 
         match self {
             Any { .. } => write!(f, "Any"),
@@ -302,23 +295,30 @@ impl fmt::Display for Type {
                 array_flag,
                 pointer_flag,
                 specialized: Some(type_),
-                ..
             } => write!(f, "T({})", type_),
             T {
                 array_flag,
                 pointer_flag,
                 specialized: None,
-                ..
             } => write!(
                 f,
                 "{}T{}",
                 pointer_marker(pointer_flag),
                 array_marker(array_flag)
             ),
+            Byte {
+                pointer_flag,
+                array_flag,
+            } => write!(
+                f,
+                "{}byte{}",
+                pointer_marker(pointer_flag),
+                array_marker(array_flag)
+            ),
             Void(_) => write!(f, "void"),
             Char {
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -326,20 +326,22 @@ impl fmt::Display for Type {
                 pointer_marker(pointer_flag),
                 array_marker(array_flag)
             ),
-            Byte {
-                array_flag,
+            Struct {
+                name,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
-                "{}byte{}",
+                "{}struct {}{}",
                 pointer_marker(pointer_flag),
+                name,
                 array_marker(array_flag)
             ),
             Short {
                 signed_flag: true,
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -349,8 +351,8 @@ impl fmt::Display for Type {
             ),
             Short {
                 signed_flag: false,
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -360,8 +362,8 @@ impl fmt::Display for Type {
             ),
             Int {
                 signed_flag: true,
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -371,8 +373,8 @@ impl fmt::Display for Type {
             ),
             Int {
                 signed_flag: false,
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -382,8 +384,8 @@ impl fmt::Display for Type {
             ),
             Long {
                 signed_flag: true,
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -393,8 +395,8 @@ impl fmt::Display for Type {
             ),
             Long {
                 signed_flag: false,
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -403,8 +405,8 @@ impl fmt::Display for Type {
                 array_marker(array_flag)
             ),
             Float {
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
@@ -413,35 +415,13 @@ impl fmt::Display for Type {
                 array_marker(array_flag)
             ),
             Double {
-                array_flag,
                 pointer_flag,
+                array_flag,
                 ..
             } => write!(
                 f,
                 "{}double{}",
                 pointer_marker(pointer_flag),
-                array_marker(array_flag)
-            ),
-            Double {
-                array_flag,
-                pointer_flag,
-                ..
-            } => write!(
-                f,
-                "{}double{}",
-                pointer_marker(pointer_flag),
-                array_marker(array_flag)
-            ),
-            Struct {
-                name,
-                array_flag,
-                pointer_flag,
-                ..
-            } => write!(
-                f,
-                "{}struct {}{}",
-                pointer_marker(pointer_flag),
-                name,
                 array_marker(array_flag)
             ),
         }
@@ -459,25 +439,28 @@ impl Type {
             Null => panic!("Type `Null` cannot be an array."),
             T {
                 pointer_flag,
-                location,
                 specialized: Some(type_),
                 ..
             } => T {
-                array_flag,
                 pointer_flag,
-                location,
+                array_flag,
                 specialized: Some(Box::new(type_.set_array_flag(array_flag))),
             },
             T {
                 pointer_flag,
-                location,
                 specialized: None,
                 ..
             } => T {
-                array_flag,
                 pointer_flag,
-                location,
+                array_flag,
                 specialized: None,
+            },
+            Byte {
+                pointer_flag,
+                ..
+            } => Byte {
+                pointer_flag,
+                array_flag,
             },
             Void(_) => panic!("Type `Void` cannot be an array."),
             Char {
@@ -485,68 +468,8 @@ impl Type {
                 location,
                 ..
             } => Char {
+                pointer_flag,
                 array_flag,
-                pointer_flag,
-                location,
-            },
-            Byte {
-                pointer_flag,
-                location,
-                ..
-            } => Byte {
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Short {
-                signed_flag,
-                pointer_flag,
-                location,
-                ..
-            } => Short {
-                signed_flag,
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Int {
-                signed_flag,
-                pointer_flag,
-                location,
-                ..
-            } => Int {
-                signed_flag,
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Long {
-                signed_flag,
-                pointer_flag,
-                location,
-                ..
-            } => Long {
-                signed_flag,
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Float {
-                pointer_flag,
-                location,
-                ..
-            } => Float {
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Double {
-                pointer_flag,
-                location,
-                ..
-            } => Double {
-                array_flag,
-                pointer_flag,
                 location,
             },
             Struct {
@@ -558,8 +481,59 @@ impl Type {
             } => Struct {
                 name,
                 members,
-                array_flag,
                 pointer_flag,
+                array_flag,
+                location,
+            },
+            Short {
+                signed_flag,
+                pointer_flag,
+                location,
+                ..
+            } => Short {
+                signed_flag,
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Int {
+                signed_flag,
+                pointer_flag,
+                location,
+                ..
+            } => Int {
+                signed_flag,
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Long {
+                signed_flag,
+                pointer_flag,
+                location,
+                ..
+            } => Long {
+                signed_flag,
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Float {
+                pointer_flag,
+                location,
+                ..
+            } => Float {
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Double {
+                pointer_flag,
+                location,
+                ..
+            } => Double {
+                pointer_flag,
+                array_flag,
                 location,
             },
         }
@@ -574,15 +548,15 @@ impl Type {
             AnyRef => panic!("Type `AnyRef` cannot be an array."),
             Null => panic!("Type `Null` cannot be an array."),
             T { array_flag, .. } => array_flag,
+            Byte { array_flag, .. } => array_flag,
             Void(_) => panic!("Type `Void` cannot be an array."),
             Char { array_flag, .. } => array_flag,
-            Byte { array_flag, .. } => array_flag,
+            Struct { array_flag, .. } => array_flag,
             Short { array_flag, .. } => array_flag,
             Int { array_flag, .. } => array_flag,
             Long { array_flag, .. } => array_flag,
             Float { array_flag, .. } => array_flag,
             Double { array_flag, .. } => array_flag,
-            Struct { array_flag, .. } => array_flag,
         }
     }
 
@@ -596,25 +570,28 @@ impl Type {
             Null => panic!("Type `Null` cannot be a pointer."),
             T {
                 array_flag,
-                location,
                 specialized: Some(type_),
                 ..
             } => T {
-                array_flag,
                 pointer_flag,
-                location,
+                array_flag,
                 specialized: Some(Box::new(type_.set_pointer_flag(pointer_flag))),
             },
             T {
                 array_flag,
-                location,
                 specialized: None,
                 ..
             } => T {
-                array_flag,
                 pointer_flag,
-                location,
+                array_flag,
                 specialized: None,
+            },
+            Byte {
+                array_flag,
+                ..
+            } => Byte {
+                pointer_flag,
+                array_flag,
             },
             Void(_) => panic!("Type `Void` cannot be a pointer."),
             Char {
@@ -622,68 +599,8 @@ impl Type {
                 location,
                 ..
             } => Char {
-                array_flag,
                 pointer_flag,
-                location,
-            },
-            Byte {
                 array_flag,
-                location,
-                ..
-            } => Byte {
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Short {
-                signed_flag,
-                array_flag,
-                location,
-                ..
-            } => Short {
-                signed_flag,
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Int {
-                signed_flag,
-                array_flag,
-                location,
-                ..
-            } => Int {
-                signed_flag,
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Long {
-                signed_flag,
-                array_flag,
-                location,
-                ..
-            } => Long {
-                signed_flag,
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Float {
-                array_flag,
-                location,
-                ..
-            } => Float {
-                array_flag,
-                pointer_flag,
-                location,
-            },
-            Double {
-                array_flag,
-                location,
-                ..
-            } => Double {
-                array_flag,
-                pointer_flag,
                 location,
             },
             Struct {
@@ -695,8 +612,59 @@ impl Type {
             } => Struct {
                 name,
                 members,
-                array_flag,
                 pointer_flag,
+                array_flag,
+                location,
+            },
+            Short {
+                signed_flag,
+                array_flag,
+                location,
+                ..
+            } => Short {
+                signed_flag,
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Int {
+                signed_flag,
+                array_flag,
+                location,
+                ..
+            } => Int {
+                signed_flag,
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Long {
+                signed_flag,
+                array_flag,
+                location,
+                ..
+            } => Long {
+                signed_flag,
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Float {
+                array_flag,
+                location,
+                ..
+            } => Float {
+                pointer_flag,
+                array_flag,
+                location,
+            },
+            Double {
+                array_flag,
+                location,
+                ..
+            } => Double {
+                pointer_flag,
+                array_flag,
                 location,
             },
         }
@@ -711,15 +679,15 @@ impl Type {
             AnyRef => panic!("Type `AnyRef` cannot be a pointer."),
             Null => panic!("Type `Null` cannot be a pointer."),
             T { pointer_flag, .. } => pointer_flag,
+            Byte { pointer_flag, .. } => pointer_flag,
             Void(_) => panic!("Type `Void` cannot be a pointer."),
             Char { pointer_flag, .. } => pointer_flag,
-            Byte { pointer_flag, .. } => pointer_flag,
+            Struct { pointer_flag, .. } => pointer_flag,
             Short { pointer_flag, .. } => pointer_flag,
             Int { pointer_flag, .. } => pointer_flag,
             Long { pointer_flag, .. } => pointer_flag,
             Float { pointer_flag, .. } => pointer_flag,
             Double { pointer_flag, .. } => pointer_flag,
-            Struct { pointer_flag, .. } => pointer_flag,
         }
     }
 

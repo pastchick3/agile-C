@@ -1,5 +1,3 @@
-//! A parser producing a vector of functions which may contain unresolved dummy types.
-
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -24,25 +22,30 @@ impl Environment {
         }
     }
 
+    // Enter a new scope.
     fn enter(&mut self) {
         self.envs.push(HashSet::new());
         self.structs.push(HashMap::new());
     }
 
+    // Leave the current scope.
     fn leave(&mut self) {
         self.envs.pop();
         self.structs.pop();
     }
 
+    // Define an identifier in the current scope.
     fn define(&mut self, name: &str) {
         self.envs.last_mut().unwrap().insert(String::from(name));
     }
 
+    // Check whether an identifier has been defined.
     fn is_defined(&self, name: &str) -> bool {
         let defined: Vec<_> = self.envs.iter().filter(|e| e.contains(name)).collect();
         !defined.is_empty()
     }
 
+    // Declare a struct in the current scope.
     fn define_struct(&mut self, name: &str, struct_: Type) {
         self.structs
             .last_mut()
@@ -50,6 +53,7 @@ impl Environment {
             .insert(String::from(name), struct_);
     }
 
+    // Get the definition of a struct.
     fn get_struct(&self, name: &str) -> Option<Type> {
         self.structs
             .iter()
@@ -887,7 +891,7 @@ impl<'a> Parser<'a> {
                     }))
                 }
             } else if let Expression::Index { expression, index } = *left {
-                if let Expression::Ident {value, location} = *expression {
+                if let Expression::Ident { value, location } = *expression {
                     if !self.environment.is_defined(&value) {
                         self.environment.define(&value);
                         let type_ = Type::T {
@@ -898,7 +902,11 @@ impl<'a> Parser<'a> {
                         };
                         Ok(Statement::Def {
                             base_type: Rc::new(RefCell::new(type_.clone())),
-                            declarators: vec![(Rc::new(RefCell::new(type_.set_array_flag(true))), value, Some(*right))],
+                            declarators: vec![(
+                                Rc::new(RefCell::new(type_.set_array_flag(true))),
+                                value,
+                                Some(*right),
+                            )],
                             location,
                         })
                     } else {
@@ -908,10 +916,7 @@ impl<'a> Parser<'a> {
                         }))
                     }
                 } else {
-                    Ok(Statement::Expr(Expression::Index {
-                        expression,
-                        index,
-                    }))
+                    Ok(Statement::Expr(Expression::Index { expression, index }))
                 }
             } else {
                 Ok(Statement::Expr(Expression::Infix {
@@ -2849,12 +2854,13 @@ mod tests {
                             })),
                             "c".to_string(),
                             Some(Expression::InitList {
-                                pairs: vec![
-                                    (None, Expression::IntConst {
+                                pairs: vec![(
+                                    None,
+                                    Expression::IntConst {
                                         value: 1,
                                         location: Location::default(),
-                                    })
-                                ],
+                                    },
+                                )],
                                 location: Location::default(),
                             }),
                         )],

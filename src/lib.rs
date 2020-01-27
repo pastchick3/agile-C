@@ -1,5 +1,3 @@
-//! A Type Inference Transpiler for the C Programming Language
-
 mod cstdlib;
 mod lexer;
 mod parser;
@@ -15,7 +13,7 @@ use preprocessor::Preprocessor;
 // use serializer::Serializer;
 use structure::Error;
 
-/// The transpiler that users should use.
+/// A type inference transpiler for the C programming language.
 ///
 /// # Examples
 ///
@@ -38,11 +36,11 @@ use structure::Error;
 ///
 /// let mut transpiler = Transpiler::new("test", input).unwrap();
 /// let output = transpiler.run().unwrap();
-/// // assert_eq!(output, expected_output);
+/// assert_eq!(output, expected_output);
 /// ```
 pub struct Transpiler {
     file_name: String,  // the file name of the input file
-    source: String,     // the source of the input file
+    source: String,     // the source string of the input file
     errors: Vec<Error>, // a vector containing all errors encounted during transpilation
 }
 
@@ -93,7 +91,7 @@ impl Transpiler {
             msg.push_str(&format!("    {}\n", err));
             msg
         });
-        message.pop();
+        message.pop(); // Pop the last "\n".
         message
     }
 }

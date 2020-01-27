@@ -1,5 +1,3 @@
-//! The preprocessor breaks a source into a vector of lines and expand `#include` properly.
-
 use std::fs;
 
 use regex::Regex;
@@ -25,11 +23,11 @@ impl<'a> Preprocessor<'a> {
             file_name,
             source,
             errors,
-            include_regex: Regex::new("^[[:space:]]*#include[[:space:]]+(\"|<)(.+)(\"|>)").unwrap(),
+            include_regex: Regex::new("^\\s*#include\\s+(\"|<)(.+)(\"|>)").unwrap(),
         }
     }
 
-    /// Break the source into (file_name, line_index, line).
+    /// Break the source string into a triple (file_name, line_index, line).
     pub fn run(&mut self) -> Result<Vec<(String, usize, String)>, ()> {
         // Break the input file into lines.
         let mut lines: Vec<_> = self
@@ -122,7 +120,7 @@ impl<'a> Preprocessor<'a> {
                     }
                 }
             } else {
-                // Reject a unbalanced include directive.
+                // Reject an unbalanced include directive.
                 self.push_error(
                     "Expect `\"file_name\"` or `<file_name>`.",
                     Location::new(&file_name, line_index, 0),

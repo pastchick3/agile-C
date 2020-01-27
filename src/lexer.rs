@@ -1,5 +1,3 @@
-//! The lexer breaks a vector of lines into a vector of tokens.
-
 use crate::structure::{Error, Location, Token};
 use Token::*;
 
@@ -7,8 +5,9 @@ use Token::*;
 ///
 /// The lexer first records the start location (`start_line_index`
 /// and `start_char_index`), and then scans the source (`line_index`
-/// and `char_index`). The lexer will slice the source from the start
-/// position to the current position to produce a token.
+/// and `char_index`) to the end of a token. Finally, the lexer will
+/// slice the source from the start position to the current position
+/// to produce a token.
 pub struct Lexer<'a> {
     lines: Vec<(String, usize, String)>, // (file_name, line_index, line)
     start_line_index: usize,             // the start line index of a token
@@ -52,9 +51,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Skip whitespaces and return true. Return false if encounter EOF.
+    /// Skip whitespaces and return true. Return false only if EOF.
     fn skip_whitespaces(&mut self) -> bool {
-        // Skip initial empty lines.
+        // Skip initial empty lines until `get_cur_ch()` is legal.
         while self.lines[self.line_index].2.is_empty() {
             self.forward();
         }
@@ -85,7 +84,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// Slice the source from the start position to the current
-    /// position to get a literal.
+    /// position to get a token literal.
     fn get_literal(&self) -> String {
         let mut literal = String::new();
         let mut line_index = self.start_line_index;
@@ -117,7 +116,7 @@ impl<'a> Lexer<'a> {
         literal
     }
 
-    /// Get the current position, using `start_line/char_index`.
+    /// Get the current position using `start_*_index`.
     fn get_location(&self) -> Location {
         let file_name = &self.lines[self.start_line_index].0;
         let line_index = self.lines[self.start_line_index].1;
@@ -138,7 +137,7 @@ impl<'a> Lexer<'a> {
             // Not at the end a line.
             self.char_index += 1;
         } else if self.line_index + 1 < self.lines.len() {
-            // At the end of a line.
+            // At the end of a line (not the last line).
             self.line_index += 1;
             self.char_index = 0;
             // Skip empty lines.
@@ -415,7 +414,7 @@ impl<'a> Lexer<'a> {
         }
         let literal = self.get_literal();
         // Split the raw literal by '.'.
-        let literal_vec: Vec<&str> = literal.split('.').collect();
+        let literal_vec: Vec<_> = literal.split('.').collect();
         match literal_vec.len() {
             // No '.', which is a integer.
             1 => Ok(IntConst {
@@ -435,7 +434,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Read a character literal, including the single quotation marks.
+    /// Read a character literal including the single quotation marks.
     fn read_char(&mut self) -> Result<Token, ()> {
         // Read a raw literal which may contain more than one character.
         let mut slash_flag = false;
@@ -475,7 +474,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Read a string literal, including the double quotation marks.
+    /// Read a string literal including the double quotation marks.
     fn read_str(&mut self) -> Result<Token, ()> {
         let mut slash_flag = false;
         loop {
@@ -500,7 +499,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    /// Read a word literal, and check whether it is a keyword or a identifier.
+    /// Read a word literal, and check whether it is a keyword.
     fn read_word(&mut self) -> Result<Token, ()> {
         // Read a word literal.
         while self.forward() {
@@ -551,7 +550,7 @@ mod tests {
 
     #[test]
     fn location() {
-        let source = "\n a b \n \n \t c \n \n";
+        let source = "\n \n a b \n \n \t c \n \n";
         let expected_errors = vec![];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
@@ -564,7 +563,7 @@ mod tests {
             Ident { literal, location } => {
                 assert_eq!(literal.as_str(), "a");
                 assert_eq!(location.file_name.as_str(), "file");
-                assert_eq!(location.line_no, 2);
+                assert_eq!(location.line_no, 3);
                 assert_eq!(location.char_no, 2);
             }
             _ => panic!(format!("Unexpected token[0]: {:#?}", tokens[0])),
@@ -573,7 +572,7 @@ mod tests {
             Ident { literal, location } => {
                 assert_eq!(literal.as_str(), "b");
                 assert_eq!(location.file_name.as_str(), "file");
-                assert_eq!(location.line_no, 2);
+                assert_eq!(location.line_no, 3);
                 assert_eq!(location.char_no, 4);
             }
             _ => panic!(format!("Unexpected token[1]: {:#?}", tokens[1])),
@@ -582,7 +581,7 @@ mod tests {
             Ident { literal, location } => {
                 assert_eq!(literal.as_str(), "c");
                 assert_eq!(location.file_name.as_str(), "file");
-                assert_eq!(location.line_no, 4);
+                assert_eq!(location.line_no, 5);
                 assert_eq!(location.char_no, 4);
             }
             _ => panic!(format!("Unexpected token[2]: {:#?}", tokens[2])),
