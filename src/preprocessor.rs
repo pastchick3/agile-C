@@ -14,11 +14,7 @@ pub struct Preprocessor<'a> {
 }
 
 impl<'a> Preprocessor<'a> {
-    pub fn new(
-        file_name: &'a str,
-        source: &'a str,
-        errors: &'a mut Vec<Error>,
-    ) -> Preprocessor<'a> {
+    pub fn new(file_name: &'a str, source: &'a str, errors: &'a mut Vec<Error>) -> Self {
         Preprocessor {
             file_name,
             source,

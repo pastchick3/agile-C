@@ -10,7 +10,7 @@ pub struct Serializer {
 }
 
 impl Serializer {
-    pub fn new(ast: Vec<StaticObject>) -> Serializer {
+    pub fn new(ast: Vec<StaticObject>) -> Self {
         Serializer {
             ast: Some(ast),
             transformed_source: Some(String::new()),

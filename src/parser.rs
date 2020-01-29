@@ -15,7 +15,7 @@ struct Environment {
 }
 
 impl Environment {
-    fn new() -> Environment {
+    fn new() -> Self {
         Environment {
             envs: vec![HashSet::new()],
             structs: vec![HashMap::new()],
@@ -36,24 +36,23 @@ impl Environment {
 
     // Define an identifier in the current scope.
     fn define(&mut self, name: &str) {
-        self.envs.last_mut().unwrap().insert(String::from(name));
+        self.envs.last_mut().unwrap().insert(name.to_string());
     }
 
     // Check whether an identifier has been defined.
     fn is_defined(&self, name: &str) -> bool {
-        let defined: Vec<_> = self.envs.iter().filter(|e| e.contains(name)).collect();
-        !defined.is_empty()
+        self.envs.iter().find(|e| e.contains(name)).is_some()
     }
 
-    // Declare a struct in the current scope.
+    // Define a structure in the current scope.
     fn define_struct(&mut self, name: &str, struct_: Type) {
         self.structs
             .last_mut()
             .unwrap()
-            .insert(String::from(name), struct_);
+            .insert(name.to_string(), struct_);
     }
 
-    // Get the definition of a struct.
+    // Get the definition of a structure.
     fn get_struct(&self, name: &str) -> Option<Type> {
         self.structs
             .iter()
@@ -63,17 +62,18 @@ impl Environment {
     }
 }
 
-/// A parser producing a vector of functions which may contain unresolved generic types.
+/// A parser producing a vector of static objects which may
+/// contain unresolved generic types.
 ///
-/// It is a Pratt parser (operator-precedence parser) with small tweaks on how it parses
-/// potentially missing type specifiers. Now the parser can handle missing type specifiers
-/// in three places.
+/// It is a Pratt parser (operator-precedence parser) with small
+/// tweaks on how it parses potentially missing type specifiers.
+/// Now the parser can handle three kinds of missing type specifiers.
 ///
-/// For missing functions' return types and parameters, the parser will insert dummy type `T`.
+/// For missing functions' return types and parameters, the parser
+/// will simply insert a dummy type `T`.
 ///
-/// For missing types in variable definitions, the parser will consel the environment object,
-/// and transform an assignment to an undefined variable into a definition statement of that
-/// variable with a dummy type `T`.
+/// For assignments to undefined variables, the parser will transform
+/// these assignments to definition statements with dummy types `T`.
 pub struct Parser<'a> {
     tokens: Vec<Token>,
     errors: &'a mut Vec<Error>,
@@ -82,7 +82,9 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: Vec<Token>, errors: &'a mut Vec<Error>) -> Parser<'a> {
+    pub fn new(tokens: Vec<Token>, errors: &'a mut Vec<Error>) -> Self {
+        // Filter out comments and also reverse the vector so we can
+        // use `pop()` and `last()` to get tokens.
         let tokens: Vec<_> = tokens
             .into_iter()
             .filter(|tk| {
@@ -93,7 +95,7 @@ impl<'a> Parser<'a> {
                 }
             })
             .rev()
-            .collect(); // We will use `Vector.pop()` and `Vector.last()` to get tokens.
+            .collect();
         Parser {
             tokens,
             errors,
@@ -102,23 +104,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Assemble a generic AST from tokens.
     pub fn run(&mut self) -> Result<Vec<StaticObject>, ()> {
-        while let Some(tk) = self.tokens.last() {
-            match tk {
-                Token::Struct(_) => {
+        loop {
+            match self.tokens.last() {
+                Some(Token::Struct(_)) => {
                     let location = self.tokens.pop().unwrap().locate();
                     match self.parse_type_struct(location) {
-                        Ok(r#struct) => {
+                        Ok(struct_) => {
                             self.assert_token("Semicolon")?;
                             self.generic_ast
                                 .as_mut()
                                 .unwrap()
-                                .push(StaticObject::Type(r#struct));
+                                .push(StaticObject::Type(struct_));
                         }
                         Err(_) => self.tokens.clear(),
                     }
                 }
-                _ => match self.parse_function() {
+                Some(_) => match self.parse_function() {
                     Ok(func) => self
                         .generic_ast
                         .as_mut()
@@ -126,18 +129,19 @@ impl<'a> Parser<'a> {
                         .push(StaticObject::Function(Box::new(func))),
                     Err(_) => self.tokens.clear(),
                 },
+                None => {
+                    if self.errors.is_empty() {
+                        return Ok(self.generic_ast.take().unwrap());
+                    } else {
+                        return Err(());
+                    }
+                }
             }
-        }
-
-        if self.errors.is_empty() {
-            Ok(self.generic_ast.take().unwrap())
-        } else {
-            Err(())
         }
     }
 
-    /// Assert the next token's type. `forward()` will be called once only
-    /// if the assertion succeeds.
+    /// Assert the next token's type. `forward()` will be called once
+    /// and the asserted token will be returned only if it succeeds.
     fn assert_token(&mut self, name: &str) -> Result<Token, ()> {
         match self.tokens.pop() {
             Some(tk) => {
@@ -157,6 +161,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Skip all tokens until (including) the next semicolons or EOF.
     fn skip_to_semicolon(&mut self) {
         loop {
             if let None | Some(Token::Semicolon(_)) = self.tokens.pop() {
@@ -165,7 +170,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Larger numbers mean higher priorities.
+    /// A larger number means a higher priority.
     fn get_prefix_precedence(&self) -> u8 {
         match self.tokens.last() {
             Some(Token::Not(_)) => 15,
@@ -179,7 +184,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // Larger numbers mean higher priorities.
+    // A larger number means a higher priority.
     fn get_infix_precedence(&self) -> u8 {
         match self.tokens.last() {
             Some(Token::Equal(_)) => 2,
@@ -211,6 +216,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A helper function to construct parsing errors.
     fn push_error(&mut self, message: &str, location: Location) {
         self.errors.push(Error::Parsing {
             message: message.to_string(),
@@ -230,10 +236,13 @@ impl<'a> Parser<'a> {
             }
         };
         // Parse the return type.
-        let mut type_ = self.parse_type()?;
+        let mut return_type = self.parse_type()?;
         if let Some(Token::Asterisk(_)) = self.tokens.last() {
-            self.tokens.pop();
-            type_ = type_.set_pointer_flag(true);
+            let location = self.tokens.pop().unwrap().locate();
+            return_type = Type::Pointer {
+                refer: Box::new(return_type),
+                location: Some(location),
+            };
         }
         // Parse the function name.
         let name = match self.tokens.pop() {
@@ -261,51 +270,49 @@ impl<'a> Parser<'a> {
         }
         let mut parameters = IndexMap::new();
         let mut ellipsis = false;
-        match self.tokens.last() {
-            Some(Token::RParen(_)) => {
-                self.tokens.pop();
-            }
-            _ => loop {
-                if let Some(Token::Ellipsis(_)) = self.tokens.last() {
+        loop {
+            match self.tokens.last() {
+                Some(Token::RParen(_)) => {
+                    self.tokens.pop();
+                    break;
+                }
+                Some(Token::Ellipsis(_)) => {
                     self.tokens.pop();
                     ellipsis = true;
                     self.assert_token("RParen")?;
                     break;
                 }
-                let type_ = self.parse_type()?;
-                let (name, location) = match self.tokens.pop() {
-                    Some(Token::Ident { literal, location }) => {
-                        self.environment.define(&literal);
-                        (literal, location)
-                    }
-                    Some(tk) => {
-                        self.push_error("Expect a parameter name.", tk.locate());
-                        return Err(());
-                    }
-                    None => {
-                        self.push_error("Unexpected EOF.", Location::default());
-                        return Err(());
-                    }
-                };
-                if parameters.contains_key(&name) {
-                    self.push_error("Duplicate parameters.", location);
+                None => {
+                    self.push_error("Unexpected EOF.", Location::default());
                     return Err(());
-                } else {
-                    parameters.insert(name, Rc::new(RefCell::new(type_)));
                 }
-                match self.tokens.pop() {
-                    Some(Token::Comma(_)) => {}
-                    Some(Token::RParen(_)) => break,
-                    Some(tk) => {
-                        self.push_error("Expect `,` or `)`.", tk.locate());
+                _ => loop {
+                    let type_ = self.parse_type()?;
+                    let (name, location) = match self.tokens.pop() {
+                        Some(Token::Ident { literal, location }) => {
+                            self.environment.define(&literal);
+                            (literal, location)
+                        }
+                        Some(tk) => {
+                            self.push_error("Expect a parameter name.", tk.locate());
+                            return Err(());
+                        }
+                        None => {
+                            self.push_error("Unexpected EOF.", Location::default());
+                            return Err(());
+                        }
+                    };
+                    if parameters.contains_key(&name) {
+                        self.push_error("Duplicate parameters.", location);
                         return Err(());
+                    } else {
+                        parameters.insert(name, Rc::new(RefCell::new(type_)));
                     }
-                    None => {
-                        self.push_error("Unexpected EOF.", Location::default());
-                        return Err(());
+                    if let Some(Token::Comma(_)) = self.tokens.last() {
+                        self.tokens.pop();
                     }
-                }
-            },
+                },
+            }
         }
         // Parse the function body.
         let body = self.parse_statement()?;
@@ -313,7 +320,7 @@ impl<'a> Parser<'a> {
         self.environment.leave();
         // Return the function node.
         Ok(Function {
-            return_type: Rc::new(RefCell::new(type_)),
+            return_type: Rc::new(RefCell::new(return_type)),
             name,
             parameters,
             ellipsis,
@@ -324,65 +331,17 @@ impl<'a> Parser<'a> {
 
     fn parse_type(&mut self) -> Result<Type, ()> {
         match self.tokens.pop() {
-            Some(Token::T(location)) => Ok(Type::T {
-                array_flag: false,
-                pointer_flag: false,
-                location: Some(location),
-                specialized: None,
-            }),
             Some(Token::Void(location)) => Ok(Type::Void(Some(location))),
-            Some(Token::Char(location)) => Ok(Type::Char {
-                array_flag: false,
-                pointer_flag: false,
-                location: Some(location),
-            }),
-            Some(Token::Short(location)) => Ok(Type::Short {
-                signed_flag: true,
-                array_flag: false,
-                pointer_flag: false,
-                location: Some(location),
-            }),
-            Some(Token::Int(location)) => Ok(Type::Int {
-                signed_flag: true,
-                array_flag: false,
-                pointer_flag: false,
-                location: Some(location),
-            }),
-            Some(Token::Long(location)) => Ok(Type::Long {
-                signed_flag: true,
-                array_flag: false,
-                pointer_flag: false,
-                location: Some(location),
-            }),
-            Some(Token::Float(location)) => Ok(Type::Float {
-                array_flag: false,
-                pointer_flag: false,
-                location: Some(location),
-            }),
-            Some(Token::Double(location)) => Ok(Type::Double {
-                array_flag: false,
-                pointer_flag: false,
-                location: Some(location),
-            }),
+            Some(Token::Char(location)) => Ok(Type::Char(Some(location))),
+            Some(Token::Short(location)) => Ok(Type::Short(Some(location))),
+            Some(Token::Int(location)) => Ok(Type::Int(Some(location))),
+            Some(Token::Long(location)) => Ok(Type::Long(Some(location))),
+            Some(Token::Float(location)) => Ok(Type::Float(Some(location))),
+            Some(Token::Double(location)) => Ok(Type::Double(Some(location))),
             Some(Token::Signed(location)) => match self.tokens.pop() {
-                Some(Token::Short(_)) => Ok(Type::Short {
-                    signed_flag: true,
-                    array_flag: false,
-                    pointer_flag: false,
-                    location: Some(location),
-                }),
-                Some(Token::Int(_)) => Ok(Type::Int {
-                    signed_flag: true,
-                    array_flag: false,
-                    pointer_flag: false,
-                    location: Some(location),
-                }),
-                Some(Token::Long(_)) => Ok(Type::Long {
-                    signed_flag: true,
-                    array_flag: false,
-                    pointer_flag: false,
-                    location: Some(location),
-                }),
+                Some(Token::Short(location)) => Ok(Type::Short(Some(location))),
+                Some(Token::Int(location)) => Ok(Type::Int(Some(location))),
+                Some(Token::Long(location)) => Ok(Type::Long(Some(location))),
                 Some(tk) => {
                     self.push_error(
                         "Expect `short`, `int`, or `long` after `signed`.",
@@ -397,24 +356,9 @@ impl<'a> Parser<'a> {
                 }
             },
             Some(Token::Unsigned(location)) => match self.tokens.pop() {
-                Some(Token::Short(_)) => Ok(Type::Short {
-                    signed_flag: false,
-                    array_flag: false,
-                    pointer_flag: false,
-                    location: Some(location),
-                }),
-                Some(Token::Int(_)) => Ok(Type::Int {
-                    signed_flag: false,
-                    array_flag: false,
-                    pointer_flag: false,
-                    location: Some(location),
-                }),
-                Some(Token::Long(_)) => Ok(Type::Long {
-                    signed_flag: false,
-                    array_flag: false,
-                    pointer_flag: false,
-                    location: Some(location),
-                }),
+                Some(Token::Short(location)) => Ok(Type::UnsignedShort(Some(location))),
+                Some(Token::Int(location)) => Ok(Type::UnsignedInt(Some(location))),
+                Some(Token::Long(location)) => Ok(Type::UnsignedLong(Some(location))),
                 Some(tk) => {
                     self.push_error(
                         "Expect `short`, `int`, or `long` after `unsigned`.",
@@ -431,12 +375,7 @@ impl<'a> Parser<'a> {
             Some(Token::Struct(location)) => self.parse_type_struct(location),
             Some(tk) => {
                 self.tokens.push(tk);
-                Ok(Type::T {
-                    array_flag: false,
-                    pointer_flag: false,
-                    location: None,
-                    specialized: None,
-                })
+                Ok(Type::T(None))
             }
             None => {
                 self.push_error("Unexpected EOF.", Location::default());
@@ -446,42 +385,58 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_struct(&mut self, location: Location) -> Result<Type, ()> {
-        let name = match self.parse_expression(0)? {
-            Expression::Ident { value, .. } => value,
-            _ => return Err(()),
+        // Parse the structure name.
+        let name = match self.tokens.pop() {
+            Some(Token::Ident { literal, .. }) => literal,
+            Some(tk) => {
+                self.push_error("Expect a struct name.", tk.locate());
+                return Err(());
+            }
+            None => {
+                self.push_error("Unexpected EOF.", Location::default());
+                return Err(());
+            }
         };
         if let Some(Token::LBrace(_)) = self.tokens.last() {
+            // Parse a structure definition.
             self.tokens.pop();
             let mut members = IndexMap::new();
             loop {
-                if let Some(Token::RBrace(_)) = self.tokens.last() {
-                    self.tokens.pop();
-                    break;
-                }
-                let (member, type_) = match self.parse_statement()? {
-                    Statement::Def {
-                        mut declarators, ..
-                    } => {
-                        if declarators.len() == 1 {
-                            let declarator = declarators.pop().unwrap();
-                            (
-                                declarator.1,
-                                Rc::try_unwrap(declarator.0).unwrap().into_inner(),
-                            )
-                        } else {
-                            self.push_error("Expect fields.", Location::default());
-                            return Err(());
-                        }
+                match self.tokens.last() {
+                    Some(Token::RBrace(_)) => {
+                        self.tokens.pop();
+                        break;
                     }
-                    _ => {
-                        self.push_error("Expect fields.", Location::default());
-                        return Err(());
+                    Some(_) => {
+                        // Parse a structure member.
+                        let (member, type_) = match self.parse_statement()? {
+                            Statement::Def {
+                                mut declarators, ..
+                            } => {
+                                // Require one member per field.
+                                if declarators.len() != 1 {
+                                    self.push_error("Expect fields.", Location::default());
+                                    return Err(());
+                                }
+                                let declarator = declarators.pop().unwrap();
+                                // The member field cannot have an initializer.
+                                if declarator.2.is_some() {
+                                    self.push_error("Expect struct members.", Location::default());
+                                    return Err(());
+                                }
+                                // Get (name, type).
+                                (
+                                    declarator.1,
+                                    Rc::try_unwrap(declarator.0).unwrap().into_inner(),
+                                )
+                            }
+                            _ => {
+                                self.push_error("Expect struct members.", Location::default());
+                                return Err(());
+                            }
+                        };
+                        members.insert(member, type_);
                     }
-                };
-                members.insert(member.to_string(), type_);
-                match self.tokens.pop() {
-                    Some(Token::RBrace(_)) => break,
-                    Some(tk) => self.tokens.push(tk),
                     None => {
                         self.push_error("Unexpected EOF.", Location::default());
                         return Err(());
@@ -491,13 +446,12 @@ impl<'a> Parser<'a> {
             let struct_ = Type::Struct {
                 name: name.clone(),
                 members,
-                array_flag: false,
-                pointer_flag: false,
                 location: Some(location),
             };
             self.environment.define_struct(&name, struct_.clone());
             Ok(struct_)
         } else {
+            // Parse a structure declaration.
             self.environment.get_struct(&name).ok_or(())
         }
     }
@@ -875,7 +829,6 @@ impl<'a> Parser<'a> {
                     let type_ = Type::T {
                         array_flag: false,
                         pointer_flag: false,
-                        location: None,
                         specialized: None,
                     };
                     Ok(Statement::Def {
@@ -897,7 +850,6 @@ impl<'a> Parser<'a> {
                         let type_ = Type::T {
                             array_flag: false,
                             pointer_flag: false,
-                            location: None,
                             specialized: None,
                         };
                         Ok(Statement::Def {
@@ -1578,7 +1530,7 @@ mod tests {
     fn statement_def() {
         let source = "
             void f() {
-                T a = 1, a;
+                a = 1;
                 char a[1];
                 short a[] = { 1 };
                 unsigned short a[1] = { 1 };
@@ -1602,34 +1554,20 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::T {
                             array_flag: false,
                             pointer_flag: false,
-                            location: Some(Location::default()),
                             specialized: None,
                         })),
-                        declarators: vec![
-                            (
-                                Rc::new(RefCell::new(Type::T {
-                                    array_flag: false,
-                                    pointer_flag: false,
-                                    location: Some(Location::default()),
-                                    specialized: None,
-                                })),
-                                "a".to_string(),
-                                Some(Expression::IntConst {
-                                    value: 1,
-                                    location: Location::default(),
-                                }),
-                            ),
-                            (
-                                Rc::new(RefCell::new(Type::T {
-                                    array_flag: false,
-                                    pointer_flag: false,
-                                    location: Some(Location::default()),
-                                    specialized: None,
-                                })),
-                                "a".to_string(),
-                                None,
-                            ),
-                        ],
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T {
+                                array_flag: false,
+                                pointer_flag: false,
+                                specialized: None,
+                            })),
+                            "a".to_string(),
+                            Some(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        )],
                         location: Location::default(),
                     },
                     Statement::Def {
@@ -2786,7 +2724,6 @@ mod tests {
             return_type: Rc::new(RefCell::new(Type::T {
                 array_flag: false,
                 pointer_flag: false,
-                location: None,
                 specialized: None,
             })),
             name: "f".to_string(),
@@ -2795,7 +2732,6 @@ mod tests {
                 Rc::new(RefCell::new(Type::T {
                     array_flag: false,
                     pointer_flag: false,
-                    location: None,
                     specialized: None,
                 })),
             )]
@@ -2820,14 +2756,12 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::T {
                             array_flag: false,
                             pointer_flag: false,
-                            location: None,
                             specialized: None,
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::T {
                                 array_flag: false,
                                 pointer_flag: false,
-                                location: None,
                                 specialized: None,
                             })),
                             "b".to_string(),
@@ -2842,14 +2776,12 @@ mod tests {
                         base_type: Rc::new(RefCell::new(Type::T {
                             array_flag: false,
                             pointer_flag: false,
-                            location: None,
                             specialized: None,
                         })),
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::T {
                                 array_flag: true,
                                 pointer_flag: false,
-                                location: None,
                                 specialized: None,
                             })),
                             "c".to_string(),

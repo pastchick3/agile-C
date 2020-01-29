@@ -62,7 +62,7 @@ struct TypeBound {
 }
 
 impl TypeBound {
-    fn new(wrapped: Rc<RefCell<Type>>) -> TypeBound {
+    fn new(wrapped: Rc<RefCell<Type>>) -> Self {
         let type_ = Type::clone(&wrapped.borrow());
         let bounded = if let Type::T { .. } = type_ {
             None
@@ -185,7 +185,7 @@ struct Scope {
 }
 
 impl Scope {
-    fn new(index: usize, outer: Option<usize>) -> Scope {
+    fn new(index: usize, outer: Option<usize>) -> Self {
         Scope {
             index,
             outer,
@@ -206,7 +206,7 @@ struct SymbolTable {
 }
 
 impl SymbolTable {
-    fn new() -> SymbolTable {
+    fn new() -> Self {
         SymbolTable {
             current_func: None,
             current_scope: None,
@@ -408,7 +408,7 @@ pub struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    pub fn new(generic_ast: Vec<StaticObject>, errors: &'a mut Vec<Error>) -> Resolver<'a> {
+    pub fn new(generic_ast: Vec<StaticObject>, errors: &'a mut Vec<Error>) -> Self {
         Resolver {
             symbol_table: SymbolTable::new(),
             generic_ast: Some(generic_ast),

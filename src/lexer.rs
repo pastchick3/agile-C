@@ -22,7 +22,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(lines: Vec<(String, usize, String)>, errors: &'a mut Vec<Error>) -> Lexer<'a> {
+    pub fn new(lines: Vec<(String, usize, String)>, errors: &'a mut Vec<Error>) -> Self {
         Lexer {
             lines,
             start_line_index: 0,
@@ -37,7 +37,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// breaks a vector of lines into a vector of tokens.
+    /// Break a vector of lines into a vector of tokens.
     pub fn run(&mut self) -> Result<Vec<Token>, ()> {
         while self.skip_whitespaces() {
             if let Ok(tk) = self.read_token() {
@@ -511,7 +511,6 @@ impl<'a> Lexer<'a> {
         let literal = self.get_literal();
         // Check whether it is a keyword or a identifier.
         match literal.as_str() {
-            "T" => Ok(T(self.get_location())),
             "void" => Ok(Void(self.get_location())),
             "char" => Ok(Char(self.get_location())),
             "short" => Ok(Short(self.get_location())),
@@ -687,10 +686,9 @@ mod tests {
 
     #[test]
     fn type_() {
-        let source = "T void char short int long float double signed unsigned";
+        let source = "void char short int long float double signed unsigned";
         let expected_errors = vec![];
         let expected_tokens = vec![
-            T(Location::default()),
             Void(Location::default()),
             Char(Location::default()),
             Short(Location::default()),
