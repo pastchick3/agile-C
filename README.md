@@ -231,7 +231,7 @@ Grammar are excerpted from [C18](https://www.iso.org/standard/74528.html) and re
 
 
 <function-definition> ::= <type-specifier>* <identifier> "(" <parameter-list> ")" <compound-statement>
-<parameter-list> ::= [<type-specifier>* <identifier>]
+<parameter-list> ::= "void" | [<type-specifier>* <identifier>]
                         | <parameter-list> "," [<type-specifier>* <identifier>]
 
 

@@ -526,7 +526,7 @@ pub enum Expression {
         arguments: Vec<Expression>,
     },
     InitList {
-        initializer: Vec<(Option<String>, Expression)>, // { 1 } for arrays, { mem = 1 } for structures
+        initializers: Vec<(Option<String>, Expression)>, // { 1 } for arrays, { .mem = 1 } for structures
         location: Location,
     },
 }

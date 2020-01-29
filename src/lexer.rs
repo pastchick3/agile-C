@@ -54,7 +54,7 @@ impl<'a> Lexer<'a> {
     /// Skip whitespaces and return true. Return false only if EOF.
     fn skip_whitespaces(&mut self) -> bool {
         // Skip initial empty lines until `get_cur_ch()` is legal.
-        while self.lines[self.line_index].2.is_empty() {
+        while !self.eof && self.lines[self.line_index].2.is_empty() {
             self.forward();
         }
         // Skip whitespaces.
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn location() {
-        let source = "\n \n a b \n \n \t c \n \n";
+        let source = "\n \n a b \n \n \t c \n \n \n";
         let expected_errors = vec![];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
