@@ -32,6 +32,7 @@ impl<'a> Preprocessor<'a> {
             .enumerate()
             .map(|(line_index, line)| (self.file_name.to_string(), line_index, line.to_string()))
             .collect();
+
         // Recursively include all required files.
         let mut modification = true;
         while modification {
@@ -42,6 +43,7 @@ impl<'a> Preprocessor<'a> {
                 .flatten()
                 .collect();
         }
+
         // Return the result.
         if self.errors.is_empty() {
             Ok(lines)

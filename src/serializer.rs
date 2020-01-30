@@ -1,7 +1,4 @@
-//! A serializer serializing a complete AST to a output string.
-use std::rc::Rc;
-
-use crate::structure::{Array, Expression, Function, Pointer, Statement, StaticObject, Type};
+use crate::structure::{Expression, Function, Statement, StaticObject, Type};
 
 pub struct Serializer {
     ast: Option<Vec<StaticObject>>,
@@ -9,6 +6,7 @@ pub struct Serializer {
     ident_level: usize,
 }
 
+/// The serializer construct a string from a valid AST.
 impl Serializer {
     pub fn new(ast: Vec<StaticObject>) -> Self {
         Serializer {
@@ -18,132 +16,122 @@ impl Serializer {
         }
     }
 
+    /// Construct a string from a valid AST.
     pub fn run(&mut self) -> String {
         self.ast
             .take()
             .unwrap()
-            .into_iter()
+            .iter()
             .for_each(|obj| self.serialize_static_object(obj));
         self.pop_char();
         self.transformed_source.take().unwrap()
     }
 
+    /// Append s to the back of the output string.
     fn push_str(&mut self, s: &str) {
         self.transformed_source.as_mut().unwrap().push_str(s);
     }
 
+    /// Append s and then a whitespace to the back of the output string.
     fn push_str_space(&mut self, s: &str) {
         self.push_str(s);
         self.push_str(" ");
     }
 
+    /// Append s and then a newline to the back of the output string.
     fn push_str_newline(&mut self, s: &str) {
         self.push_str(s);
         self.push_str("\n");
     }
 
+    /// Remove the last char from the output string.
     fn pop_char(&mut self) {
         self.transformed_source.as_mut().unwrap().pop();
     }
 
-    fn serialize_static_object(&mut self, object: StaticObject) {
+    /// This function will automatically add a newline when done.
+    fn serialize_static_object(&mut self, object: &StaticObject) {
         match object {
-            StaticObject::Type(r#type) => {
-                self.serialize_type(r#type);
+            StaticObject::Type(type_) => {
+                self.serialize_type(type_);
                 self.pop_char();
                 self.push_str_newline(";");
             }
-            StaticObject::Function(func) => self.serialize_function(*func),
+            StaticObject::Function(func) => self.serialize_function(func),
         }
         self.push_str_newline("");
     }
 
-    fn serialize_function(&mut self, func: Function) {
+    /// This function will automatically add nothing when done.
+    fn serialize_function(&mut self, func: &Function) {
         let Function {
             return_type,
             name,
             parameters,
+            ellipsis,
             body,
             ..
         } = func;
-        self.serialize_type(Rc::try_unwrap(return_type).unwrap().into_inner());
-        self.push_str_space(&name);
+
+        // Serialize the return type.
+        self.serialize_type(&return_type.borrow());
+        self.serialize_pointer_marker(&return_type.borrow());
+
+        // Serialize the function name.
+        self.push_str_space(name);
         self.pop_char();
+
+        // Serialize the parameter list.
         self.push_str("(");
         if !parameters.is_empty() {
-            for (param, r#type) in parameters {
-                self.serialize_type(Rc::try_unwrap(r#type).unwrap().into_inner());
-                self.push_str(&param);
+            for (param, type_) in parameters {
+                self.serialize_type(&type_.borrow());
+                self.serialize_pointer_marker(&type_.borrow());
+                self.push_str(param);
+                self.serialize_array_marker(&type_.borrow());
                 self.push_str_space(",");
             }
             self.pop_char();
             self.pop_char();
+        } else if !ellipsis {
+            self.push_str("void");
         }
         self.push_str_space(")");
+
+        // Serialize the function body.
         self.serialize_statement(body);
     }
 
-    fn serialize_type(&mut self, r#type: Type) {
-        match r#type {
-            Type::Any { .. } => unreachable!(),
-            Type::Nothing { .. } => unreachable!(),
-            Type::AnyRef { .. } => unreachable!(),
-            Type::Null { .. } => unreachable!(),
-            Type::T { specialized, .. } => {
-                if let Some(type_) = specialized {
-                    self.serialize_type(*type_);
-                } else {
-                    self.push_str_space("T");
-                }
-            }
-            Type::Void { .. } => self.push_str_space("void"),
-            Type::Char { .. } => self.push_str_space("char"),
-            Type::Short { signed_flag, .. } => {
-                if signed_flag {
-                    self.push_str_space("short");
-                } else {
-                    self.push_str_space("unsigned short");
-                }
-            }
-            Type::Int { signed_flag, .. } => {
-                if signed_flag {
-                    self.push_str_space("int");
-                } else {
-                    self.push_str_space("unsigned int");
-                }
-            }
-            Type::Long { signed_flag, .. } => {
-                if signed_flag {
-                    self.push_str_space("long");
-                } else {
-                    self.push_str_space("unsigned long");
-                }
-            }
-            Type::Float { .. } => self.push_str_space("float"),
-            Type::Double { .. } => self.push_str_space("double"),
+    /// This function will automatically add a whitespace when done.
+    ///
+    /// This function will only serialize the base type of pointers and arrays.
+    fn serialize_type(&mut self, type_: &Type) {
+        match type_ {
+            Type::T(Some(typ)) => self.serialize_type(typ),
+            Type::Void(_) => self.push_str_space("void"),
+            Type::Char(_) => self.push_str_space("char"),
+            Type::Double(_) => self.push_str_space("double"),
+            Type::Float(_) => self.push_str_space("float"),
+            Type::Long(_) => self.push_str_space("long"),
+            Type::UnsignedLong(_) => self.push_str_space("unsigned long"),
+            Type::Int(_) => self.push_str_space("int"),
+            Type::UnsignedInt(_) => self.push_str_space("unsigned int"),
+            Type::Short(_) => self.push_str_space("short"),
+            Type::UnsignedShort(_) => self.push_str_space("unsigned short"),
+            Type::Pointer { refer, .. } => self.serialize_type(refer),
+            Type::Array { content, .. } => self.serialize_type(content),
             Type::Struct { name, members, .. } => {
                 self.push_str_space("struct");
-                self.push_str_space(&name);
+                self.push_str_space(name);
                 if members.is_empty() {
                     self.push_str_space("{}");
                 } else {
                     self.push_str_newline("{");
                     self.ident_level += 1;
-                    for (member, r#type) in members {
+                    for (member, type_) in members {
                         self.push_str(&" ".repeat(self.ident_level * 4));
-                        self.serialize_type(r#type.clone());
-                        if r#type.get_pointer_flag() {
-                            self.push_str("*");
-                        }
-                        self.push_str_space(&member);
-                        let (array_flag, array_len) = r#type.get_array();
-                        if array_flag {
-                            self.push_str("[");
-                            if let Some(len) = array_len {
-                                self.push_str(&len.to_string());
-                            }
-                            self.push_str_space("]");
-                        }
+                        self.serialize_type(type_);
+                        self.push_str_space(member);
                         self.pop_char();
                         self.push_str_newline(";")
                     }
@@ -152,113 +140,57 @@ impl Serializer {
                     self.push_str_space("}");
                 }
             }
+            typ => panic!("Try to serialize a dummy type `{}`.", typ),
         }
     }
 
-    fn serialize_expression(&mut self, expr: Expression) {
-        match expr {
-            Expression::Ident { value, .. } => self.push_str_space(&value),
-            Expression::IntConst { value, .. } => self.push_str_space(&value.to_string()),
-            Expression::FloatConst { value, .. } => self.push_str_space(&value.to_string()),
-            Expression::CharConst { value, .. } => self.push_str_space(&value),
-            Expression::StrConst { value, .. } => self.push_str_space(&value),
-            Expression::Prefix {
-                operator,
-                expression,
-                ..
-            } => {
-                self.push_str(operator);
-                self.serialize_expression(*expression);
+    /// This function will automatically add nothing when done.
+    fn serialize_pointer_marker(&mut self, type_: &Type) {
+        match type_ {
+            Type::Pointer { refer, .. } => {
+                self.serialize_pointer_marker(refer);
+                self.push_str("*");
             }
-            Expression::Infix {
-                left,
-                operator,
-                right,
+            _ => (),
+        }
+    }
+
+    /// This function will automatically add nothing when done.
+    fn serialize_array_marker(&mut self, type_: &Type) {
+        match type_ {
+            Type::Array {
+                content, length, ..
             } => {
-                self.serialize_expression(*left);
-                if let "." | "->" = operator {
-                    self.pop_char();
-                    self.push_str(operator);
+                self.serialize_array_marker(content);
+                if let Some(len) = length {
+                    self.push_str("[");
+                    self.push_str(&len.to_string());
+                    self.push_str("]");
                 } else {
-                    self.push_str_space(operator);
+                    self.push_str("[]");
                 }
-                self.serialize_expression(*right);
             }
-            Expression::Suffix {
-                operator,
-                expression,
-            } => {
-                self.serialize_expression(*expression);
-                self.pop_char();
-                self.push_str_space(operator);
-            }
-            Expression::Group { expression, .. } => {
-                self.push_str("(");
-                self.serialize_expression(*expression);
-                self.pop_char();
-                self.push_str_space(")");
-            }
-            Expression::Index { expression, index } => {
-                self.serialize_expression(*expression);
-                self.pop_char();
-                self.push_str("[");
-                self.serialize_expression(*index);
-                self.pop_char();
-                self.push_str_space("]");
-            }
-            Expression::Call {
-                expression,
-                arguments,
-            } => {
-                self.serialize_expression(*expression);
-                self.pop_char();
-                self.push_str("(");
-                if !arguments.is_empty() {
-                    for arg in arguments {
-                        self.serialize_expression(arg);
-                        self.pop_char();
-                        self.push_str_space(",");
-                    }
-                    self.pop_char();
-                    self.pop_char();
-                }
-                self.push_str_space(")");
-            }
-            Expression::InitList { pairs, .. } => {
-                if pairs.is_empty() {
-                    return self.push_str_space("{}");
-                }
-                self.push_str_space("{");
-                for (member, expr) in pairs {
-                    if let Some(name) = member {
-                        self.push_str(".");
-                        self.push_str_space(&name);
-                        self.push_str_space("=");
-                    }
-                    self.serialize_expression(expr);
-                    self.pop_char();
-                    self.push_str_space(",");
-                }
-                self.pop_char();
-                self.pop_char();
-                self.push_str_space(" }");
-            }
+            _ => (),
         }
     }
 
-    fn serialize_statement(&mut self, stmt: Statement) {
+    /// This function will automatically add a newline when done.
+    fn serialize_statement(&mut self, statement: &Statement) {
+        // Not every statement starts a new line, for example, the initializer
+        // in the for loop.
         if self.transformed_source.as_ref().unwrap().ends_with('\n') {
             self.push_str(&" ".repeat(self.ident_level * 4));
         }
-        match stmt {
+
+        match statement {
             Statement::Null(_) => self.push_str_newline(";"),
-            Statement::Continue(_) => self.push_str_newline("continue;"),
-            Statement::Break(_) => self.push_str_newline("break;"),
             Statement::Expr(expr) => {
                 self.serialize_expression(expr);
                 self.pop_char();
                 self.push_str_newline(";");
             }
+            Statement::Continue(_) => self.push_str_newline("continue;"),
+            Statement::Break(_) => self.push_str_newline("break;"),
             Statement::Return { expression, .. } => match expression {
                 Some(expr) => {
                     self.push_str_space("return");
@@ -287,41 +219,22 @@ impl Serializer {
                 declarators,
                 ..
             } => {
-                let type_ = match declarators.last() {
-                    Some((type_, _, _)) => type_.borrow().clone(),
-                    None => Rc::try_unwrap(base_type).unwrap().into_inner(),
-                };
-                self.serialize_type(type_);
-                if declarators.is_empty() {
-                    self.pop_char();
-                    self.push_str_newline(";");
-                } else {
-                    for (r#type, ident, init) in declarators {
-                        if (*r#type).clone().into_inner().get_pointer_flag() {
-                            self.push_str("*");
-                        }
-                        self.push_str_space(&ident);
-                        let (array_flag, array_len) =
-                            Rc::try_unwrap(r#type).unwrap().into_inner().get_array();
-                        if array_flag {
-                            self.pop_char();
-                            self.push_str("[");
-                            if let Some(len) = array_len {
-                                self.push_str(&len.to_string());
-                            }
-                            self.push_str_space("]");
-                        }
-                        if let Some(ex) = init {
-                            self.push_str_space("=");
-                            self.serialize_expression(ex);
-                        }
+                self.serialize_type(&base_type.borrow());
+                for (type_, ident, init) in declarators {
+                    self.serialize_pointer_marker(&type_.borrow());
+                    self.push_str(ident);
+                    self.serialize_array_marker(&type_.borrow());
+                    if let Some(expr) = init {
+                        self.push_str(" ");
+                        self.push_str_space("=");
+                        self.serialize_expression(expr);
                         self.pop_char();
-                        self.push_str_space(",");
                     }
-                    self.pop_char();
-                    self.pop_char();
-                    self.push_str_newline(";");
+                    self.push_str_space(",");
                 }
+                self.pop_char();
+                self.pop_char();
+                self.push_str_newline(";");
             }
             Statement::While {
                 condition, body, ..
@@ -331,13 +244,13 @@ impl Serializer {
                 self.serialize_expression(condition);
                 self.pop_char();
                 self.push_str_space(")");
-                self.serialize_statement(*body);
+                self.serialize_statement(body);
             }
             Statement::Do {
                 condition, body, ..
             } => {
                 self.push_str_space("do");
-                self.serialize_statement(*body);
+                self.serialize_statement(body);
                 self.pop_char();
                 self.push_str(" ");
                 self.push_str_space("while");
@@ -357,25 +270,25 @@ impl Serializer {
                 self.push_str_space("for");
                 self.push_str("(");
                 match initialization {
-                    Some(ex) => {
-                        self.serialize_statement(*ex);
+                    Some(stmt) => {
+                        self.serialize_statement(stmt);
                         self.pop_char();
                         self.pop_char();
                     }
                     None => self.push_str_space(""),
                 }
                 self.push_str_space(";");
-                if let Some(ex) = condition {
-                    self.serialize_expression(ex);
+                if let Some(expr) = condition {
+                    self.serialize_expression(expr);
                     self.pop_char();
                 }
                 self.push_str_space(";");
-                if let Some(ex) = increment {
-                    self.serialize_expression(ex);
+                if let Some(expr) = increment {
+                    self.serialize_expression(expr);
                     self.pop_char();
                 }
                 self.push_str_space(")");
-                self.serialize_statement(*body);
+                self.serialize_statement(body);
             }
             Statement::If {
                 condition,
@@ -388,11 +301,11 @@ impl Serializer {
                 self.serialize_expression(condition);
                 self.pop_char();
                 self.push_str_space(")");
-                self.serialize_statement(*body);
-                if let Some(st) = alternative {
+                self.serialize_statement(body);
+                if let Some(stmt) = alternative {
                     self.pop_char();
-                    self.push_str_space(" else");
-                    self.serialize_statement(*st);
+                    self.push_str(" else ");
+                    self.serialize_statement(stmt);
                 }
             }
             Statement::Switch {
@@ -406,10 +319,14 @@ impl Serializer {
                 self.serialize_expression(expression);
                 self.pop_char();
                 self.push_str_space(")");
+
+                // Serialize an empty switch.
                 if branches.is_empty() && default.is_none() {
                     self.push_str_newline("{}");
                     return;
                 }
+
+                // Serialize branches.
                 self.push_str_newline("{");
                 self.ident_level += 1;
                 for (label, stmts) in branches {
@@ -424,6 +341,8 @@ impl Serializer {
                     }
                     self.ident_level -= 1;
                 }
+
+                // Serialize the default branch.
                 if let Some(stmts) = default {
                     self.push_str(&" ".repeat(self.ident_level * 4));
                     self.push_str_newline("default:");
@@ -433,9 +352,102 @@ impl Serializer {
                     }
                     self.ident_level -= 1;
                 }
+
                 self.ident_level -= 1;
                 self.push_str(&" ".repeat(self.ident_level * 4));
                 self.push_str_newline("}");
+            }
+        }
+    }
+
+    /// This function will automatically add a whitespace when done.
+    fn serialize_expression(&mut self, expression: &Expression) {
+        match expression {
+            Expression::Ident { value, .. } => self.push_str_space(value),
+            Expression::IntConst { value, .. } => self.push_str_space(&value.to_string()),
+            Expression::FloatConst { value, .. } => self.push_str_space(&value.to_string()),
+            Expression::CharConst { value, .. } => self.push_str_space(value),
+            Expression::StrConst { value, .. } => self.push_str_space(value),
+            Expression::Prefix {
+                operator,
+                expression,
+                ..
+            } => {
+                self.push_str(operator);
+                self.serialize_expression(expression);
+            }
+            Expression::Infix {
+                left,
+                operator,
+                right,
+            } => {
+                self.serialize_expression(left);
+                if let &"." | &"->" = operator {
+                    self.pop_char();
+                    self.push_str(operator);
+                } else {
+                    self.push_str_space(operator);
+                }
+                self.serialize_expression(right);
+            }
+            Expression::Postfix {
+                operator,
+                expression,
+            } => {
+                self.serialize_expression(expression);
+                self.pop_char();
+                self.push_str_space(operator);
+            }
+            Expression::Group { expression, .. } => {
+                self.push_str("(");
+                self.serialize_expression(expression);
+                self.pop_char();
+                self.push_str_space(")");
+            }
+            Expression::Index { expression, index } => {
+                self.serialize_expression(expression);
+                self.pop_char();
+                self.push_str("[");
+                self.serialize_expression(index);
+                self.pop_char();
+                self.push_str_space("]");
+            }
+            Expression::Call {
+                expression,
+                arguments,
+            } => {
+                self.serialize_expression(expression);
+                self.pop_char();
+                self.push_str("(");
+                if !arguments.is_empty() {
+                    for arg in arguments {
+                        self.serialize_expression(arg);
+                        self.pop_char();
+                        self.push_str_space(",");
+                    }
+                    self.pop_char();
+                    self.pop_char();
+                }
+                self.push_str_space(")");
+            }
+            Expression::InitList { initializers, .. } => {
+                if initializers.is_empty() {
+                    return self.push_str_space("{}");
+                }
+                self.push_str_space("{");
+                for (member, expr) in initializers {
+                    if let Some(name) = member {
+                        self.push_str(".");
+                        self.push_str_space(name);
+                        self.push_str_space("=");
+                    }
+                    self.serialize_expression(expr);
+                    self.pop_char();
+                    self.push_str_space(",");
+                }
+                self.pop_char();
+                self.pop_char();
+                self.push_str_space(" }");
             }
         }
     }
@@ -450,10 +462,11 @@ mod tests {
     use crate::resolver::Resolver;
 
     #[test]
-    fn r#struct() {
+    fn struct_() {
         let source = "
             struct A {};
         ";
+        let expected_errors = vec![];
         let expected_transformed_source = "struct A {};\n";
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
@@ -463,18 +476,21 @@ mod tests {
         let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
         let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
         let transformed_source = Serializer::new(ast).run();
-        assert!(errors.is_empty());
+        assert_eq!(errors, expected_errors);
         assert_eq!(&transformed_source, expected_transformed_source);
     }
 
     #[test]
     fn function() {
         let source = "
-            void f() {}
+            int *f() {}
+            void f(void) {}
             void f(int a) {}
             void f(int a, unsigned int b) {}
         ";
-        let expected_transformed_source = "void f() {}
+        let expected_transformed_source = "int *f() {}
+
+void f(void) {}
 
 void f(int a) {}
 
@@ -493,62 +509,8 @@ void f(int a, unsigned int b) {}
     }
 
     #[test]
-    fn expression() {
-        let source = "
-            struct S {
-                int mem;
-            };
-            
-            void f(int a) {
-                a;
-                1;
-                1.1;
-                '1';
-                \"1\";
-                +1 + (a++);
-                int arr[] = { 1 };
-                arr[0];
-                f(1);
-                struct S var, *ptr;
-                var.mem;
-                ptr->mem;
-            }
-        ";
-        let expected_transformed_source = "struct S {
-    int mem;
-};
-
-void f(int a) {
-    a;
-    1;
-    1.1;
-    '1';
-    \"1\";
-    +1 + (a++);
-    int arr[] = { 1 };
-    arr[0];
-    f(1);
-    struct S {
-        int mem;
-    } var, *ptr;
-    var.mem;
-    ptr->mem;
-}
-";
-        let mut errors = Vec::new();
-        let lines = Preprocessor::new("file", source, &mut errors)
-            .run()
-            .unwrap();
-        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
-        let transformed_source = Serializer::new(ast).run();
-        assert!(errors.is_empty());
-        assert_eq!(&transformed_source, expected_transformed_source);
-    }
-
-    #[test]
     fn statement() {
+        // Notice `struct A` (a2) will be expanded.
         let source = "
             void f() {
                 {
@@ -561,9 +523,9 @@ void f(int a) {
                 int d[2] = { 1, 2 };
                 unsigned int *e;
                 long f, *g = &f;
-                unsigned long h, i = 1;
-                float j;
-                double k = 1;
+                unsigned long h;
+                float i = 1;
+                double j, k = 1;
                 
                 struct A {} a1;
                 struct B {
@@ -573,7 +535,7 @@ void f(int a) {
                     int a;
                     float b;
                 } c1 = { .a = 1, .b = 2 };
-                struct D {};
+                struct A a2;
             
                 return;
             }
@@ -620,9 +582,9 @@ void f(int a) {
     int d[2] = { 1, 2 };
     unsigned int *e;
     long f, *g = &f;
-    unsigned long h, i = 1;
-    float j;
-    double k = 1;
+    unsigned long h;
+    float i = 1;
+    double j, k = 1;
     struct A {} a1;
     struct B {
         int a;
@@ -631,7 +593,7 @@ void f(int a) {
         int a;
         float b;
     } c1 = { .a = 1, .b = 2 };
-    struct D {};
+    struct A {} a2;
     return;
 }
 
@@ -657,6 +619,62 @@ int m(int a) {
             1;
     }
     return 0;
+}
+";
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        let transformed_source = Serializer::new(ast).run();
+        assert!(errors.is_empty());
+        assert_eq!(&transformed_source, expected_transformed_source);
+    }
+
+    #[test]
+    fn expression() {
+        // Notice `struct S` (var) will be expanded.
+        let source = "
+            struct S {
+                int mem;
+            };
+            
+            void f(int a) {
+                a;
+                1;
+                1.1;
+                '1';
+                \"1\";
+                +1 + (a++);
+                int arr[] = { 1 };
+                arr[0];
+                f(1);
+                struct S var, *ptr;
+                var.mem;
+                ptr->mem;
+            }
+        ";
+        let expected_transformed_source = "struct S {
+    int mem;
+};
+
+void f(int a) {
+    a;
+    1;
+    1.1;
+    '1';
+    \"1\";
+    +1 + (a++);
+    int arr[] = { 1 };
+    arr[0];
+    f(1);
+    struct S {
+        int mem;
+    } var, *ptr;
+    var.mem;
+    ptr->mem;
 }
 ";
         let mut errors = Vec::new();

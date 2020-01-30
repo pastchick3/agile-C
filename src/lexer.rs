@@ -57,6 +57,7 @@ impl<'a> Lexer<'a> {
         while !self.eof && self.lines[self.line_index].2.is_empty() {
             self.forward();
         }
+
         // Skip whitespaces.
         while let Some(ch) = self.get_cur_ch() {
             if ch.is_whitespace() {
@@ -65,6 +66,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
+
         // Check for EOF.
         !self.eof
     }
@@ -178,6 +180,7 @@ impl<'a> Lexer<'a> {
         // Record the starting position.
         self.start_line_index = self.line_index;
         self.start_char_index = self.char_index;
+
         // Read a token.
         match self.get_cur_ch() {
             Some('+') => {
@@ -413,6 +416,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let literal = self.get_literal();
+
         // Split the raw literal by '.'.
         let literal_vec: Vec<_> = literal.split('.').collect();
         match literal_vec.len() {
@@ -455,6 +459,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let literal = self.get_literal();
+
         // Validate the raw literal.
         match literal.as_str() {
             // Normal characters.
@@ -509,6 +514,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let literal = self.get_literal();
+
         // Check whether it is a keyword or a identifier.
         match literal.as_str() {
             "void" => Ok(Void(self.get_location())),

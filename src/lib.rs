@@ -2,15 +2,15 @@ mod cstdlib;
 mod lexer;
 mod parser;
 mod preprocessor;
-// mod resolver;
-// mod serializer;
+mod resolver;
+mod serializer;
 mod structure;
 
 use lexer::Lexer;
 use parser::Parser;
 use preprocessor::Preprocessor;
-// use resolver::Resolver;
-// use serializer::Serializer;
+use resolver::Resolver;
+use serializer::Serializer;
 use structure::Error;
 
 /// A type inference transpiler for the C programming language.
@@ -77,12 +77,11 @@ impl Transpiler {
         let generic_ast = Parser::new(tokens, &mut self.errors)
             .run()
             .map_err(|_| self.format_errors())?;
-        // let ast = Resolver::new(generic_ast, &mut self.errors)
-        //     .run()
-        //     .map_err(|_| self.format_errors())?;
-        // let transformed_source = Serializer::new(ast).run();
-        // Ok(transformed_source)
-        Ok(String::new())
+        let ast = Resolver::new(generic_ast, &mut self.errors)
+            .run()
+            .map_err(|_| self.format_errors())?;
+        let transformed_source = Serializer::new(ast).run();
+        Ok(transformed_source)
     }
 
     /// Format errors into a string.

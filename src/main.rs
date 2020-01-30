@@ -30,6 +30,7 @@ fn main() {
     // Extract the file name of the input file.
     // We directly unwrap results because we have succesfully opened the file.
     let file_name = opt.input.file_name().unwrap().to_str().unwrap();
+
     // Construct the transpiler.
     let mut transpiler = Transpiler::new(file_name, &source).unwrap_or_else(|err| {
         eprintln!("{}: {}", "Transpiler Error".red(), err);
@@ -40,6 +41,7 @@ fn main() {
         eprintln!("{}: {}", "Transpilation Error".red(), err);
         process::exit(1);
     });
+
     // Write the output file.
     fs::write(opt.output, &transformed_source).unwrap_or_else(|err| {
         eprintln!("{}: {}", "Output File Error".red(), err);

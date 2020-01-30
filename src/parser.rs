@@ -227,6 +227,7 @@ impl<'a> Parser<'a> {
     fn parse_function(&mut self) -> Result<Function, ()> {
         // Enter a new scope.
         self.environment.enter();
+
         // Record the function location.
         let location = match self.tokens.last() {
             Some(tk) => tk.locate(),
@@ -235,6 +236,7 @@ impl<'a> Parser<'a> {
                 return Err(());
             }
         };
+
         // Parse the return type.
         let mut return_type = self.parse_type()?;
         if let Some(Token::Asterisk(_)) = self.tokens.last() {
@@ -244,6 +246,7 @@ impl<'a> Parser<'a> {
                 location: Some(location),
             };
         }
+
         // Parse the function name.
         let name = match self.tokens.pop() {
             Some(Token::Ident { literal, .. }) => literal,
@@ -256,6 +259,7 @@ impl<'a> Parser<'a> {
                 return Err(());
             }
         };
+
         // Parse the parameter list.
         match self.tokens.pop() {
             Some(Token::LParen(_)) => (),
@@ -336,10 +340,13 @@ impl<'a> Parser<'a> {
                 return Err(());
             }
         }
+
         // Parse the function body.
         let body = self.parse_statement()?;
+
         // Leave the scope.
         self.environment.leave();
+
         // Return the function node.
         Ok(Function {
             return_type: Rc::new(RefCell::new(return_type)),
@@ -419,6 +426,7 @@ impl<'a> Parser<'a> {
                 return Err(());
             }
         };
+
         if let Some(Token::LBrace(_)) = self.tokens.last() {
             // Parse a structure definition.
             self.tokens.pop();
@@ -474,7 +482,9 @@ impl<'a> Parser<'a> {
             Ok(struct_)
         } else {
             // Parse a structure declaration.
-            self.environment.get_struct(&name).ok_or(())
+            self.environment.get_struct(&name).ok_or_else(|| {
+                self.push_error("Undefined structure.", location);
+            })
         }
     }
 
@@ -608,6 +618,7 @@ impl<'a> Parser<'a> {
     fn parse_statement_for(&mut self, location: Location) -> Result<Statement, ()> {
         self.environment.enter();
         self.assert_token("LParen")?;
+
         // Parse the initialization.
         let initialization = match self.tokens.last() {
             Some(Token::Semicolon(_)) => {
@@ -616,6 +627,7 @@ impl<'a> Parser<'a> {
             }
             _ => Some(Box::new(self.parse_statement()?)),
         };
+
         // Parse the condition.
         let condition = match self.tokens.last() {
             Some(Token::Semicolon(_)) => None,
@@ -623,12 +635,14 @@ impl<'a> Parser<'a> {
         };
         self.assert_token("Semicolon")
             .map_err(|_| self.skip_to_semicolon())?;
+
         // Parse the increment.
         let increment = match self.tokens.last() {
             Some(Token::RParen(_)) => None,
             _ => Some(self.parse_expression(0)?),
         };
         self.assert_token("RParen")?;
+
         let body = self.parse_statement()?;
         self.environment.leave();
         Ok(Statement::For {
@@ -684,6 +698,7 @@ impl<'a> Parser<'a> {
                     }
                     branches.push((expr, stmts));
                 }
+
                 // Parse `default`.
                 Some(tk @ Token::Default_(_)) => {
                     if default.is_some() {
@@ -702,6 +717,7 @@ impl<'a> Parser<'a> {
                     }
                     default = Some(stmts);
                 }
+
                 Some(Token::RBrace(_)) => break,
                 Some(tk) => {
                     self.push_error("Expect `case` or `default`.", tk.locate());
@@ -736,6 +752,7 @@ impl<'a> Parser<'a> {
                     location: Some(location),
                 };
             }
+
             // Parse the identifier.
             match self.tokens.pop() {
                 Some(Token::Ident { literal, .. }) => {
@@ -743,13 +760,16 @@ impl<'a> Parser<'a> {
                     // Check for array types.
                     if let Some(Token::LBracket(_)) = self.tokens.last() {
                         let location = self.tokens.pop().unwrap().locate();
+                        let mut length = None;
                         match self.tokens.last() {
                             Some(Token::RBracket(_)) => {
                                 self.tokens.pop();
                             }
                             _ => {
                                 match self.parse_expression(0)? {
-                                    Expression::IntConst { .. } => (),
+                                    Expression::IntConst { value, .. } if value > 0 => {
+                                        length = Some(value as usize);
+                                    }
                                     expr => {
                                         self.push_error(
                                             "Expect an integral literal.",
@@ -762,6 +782,7 @@ impl<'a> Parser<'a> {
                         }
                         type_ = Type::Array {
                             content: Box::new(type_),
+                            length,
                             location: Some(location),
                         }
                     }
@@ -784,6 +805,7 @@ impl<'a> Parser<'a> {
                 }
                 None => (),
             }
+
             // Parse the delimiter.
             match self.tokens.pop() {
                 Some(Token::Comma(_)) => (),
@@ -799,6 +821,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+
         Ok(Statement::Def {
             base_type: Rc::new(RefCell::new(base_type)),
             declarators,
@@ -898,6 +921,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
+
                 // { 1 } for arrays
                 Some(_) => {
                     // Parse an array element.
@@ -920,6 +944,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
+
                 None => {
                     self.push_error("Unexpected EOF.", Location::default());
                     return Err(());
@@ -1564,6 +1589,7 @@ mod tests {
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Array {
                                 content: Box::new(Type::Char(Some(Location::default()))),
+                                length: Some(1),
                                 location: Some(Location::default()),
                             })),
                             "a".to_string(),
@@ -1576,6 +1602,7 @@ mod tests {
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Array {
                                 content: Box::new(Type::Short(Some(Location::default()))),
+                                length: None,
                                 location: Some(Location::default()),
                             })),
                             "a".to_string(),
@@ -1599,6 +1626,7 @@ mod tests {
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Array {
                                 content: Box::new(Type::UnsignedShort(Some(Location::default()))),
+                                length: Some(1),
                                 location: Some(Location::default()),
                             })),
                             "a".to_string(),
@@ -1620,6 +1648,7 @@ mod tests {
                         declarators: vec![(
                             Rc::new(RefCell::new(Type::Array {
                                 content: Box::new(Type::Int(Some(Location::default()))),
+                                length: Some(2),
                                 location: Some(Location::default()),
                             })),
                             "a".to_string(),
@@ -1739,1034 +1768,912 @@ mod tests {
         assert_eq!(generic_ast, expected_generic_ast);
     }
 
-    // #[test]
-    // fn statement_def_struct() {
-    //     let source = "
-    //         void f() {
-    //             struct A {} a;
-    //             struct B {
-    //                 int a;
-    //             } b = { 1 };
-    //             struct C {
-    //                 int a;
-    //                 float b;
-    //             } c = { 1, .b = 2 };
-    //             struct D {};
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![
-    //                 Statement::Def {
-    //                     base_type: Rc::new(RefCell::new(Type::Struct {
-    //                         name: "A".to_string(),
-    //                         members: IndexMap::new(),
-    //                         array_flag: false,
-    //                         pointer_flag: false,
-    //                         location: Some(Location::default()),
-    //                     })),
-    //                     declarators: vec![(
-    //                         Rc::new(RefCell::new(Type::Struct {
-    //                             name: "A".to_string(),
-    //                             members: IndexMap::new(),
-    //                             array_flag: false,
-    //                             pointer_flag: false,
-    //                             location: Some(Location::default()),
-    //                         })),
-    //                         "a".to_string(),
-    //                         None,
-    //                     )],
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::Def {
-    //                     base_type: Rc::new(RefCell::new(Type::Struct {
-    //                         name: "B".to_string(),
-    //                         members: [(
-    //                             "a".to_string(),
-    //                             Type::Int {
-    //                                 signed_flag: true,
-    //                                 array_flag: false,
-    //                                 pointer_flag: false,
-    //                                 location: Some(Location::default()),
-    //                             },
-    //                         )]
-    //                         .iter()
-    //                         .cloned()
-    //                         .collect(),
-    //                         array_flag: false,
-    //                         pointer_flag: false,
-    //                         location: Some(Location::default()),
-    //                     })),
-    //                     declarators: vec![(
-    //                         Rc::new(RefCell::new(Type::Struct {
-    //                             name: "B".to_string(),
-    //                             members: [(
-    //                                 "a".to_string(),
-    //                                 Type::Int {
-    //                                     signed_flag: true,
-    //                                     array_flag: false,
-    //                                     pointer_flag: false,
-    //                                     location: Some(Location::default()),
-    //                                 },
-    //                             )]
-    //                             .iter()
-    //                             .cloned()
-    //                             .collect(),
-    //                             array_flag: false,
-    //                             pointer_flag: false,
-    //                             location: Some(Location::default()),
-    //                         })),
-    //                         "b".to_string(),
-    //                         Some(Expression::InitList {
-    //                             pairs: vec![(
-    //                                 None,
-    //                                 Expression::IntConst {
-    //                                     value: 1,
-    //                                     location: Location::default(),
-    //                                 },
-    //                             )],
-    //                             location: Location::default(),
-    //                         }),
-    //                     )],
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::Def {
-    //                     base_type: Rc::new(RefCell::new(Type::Struct {
-    //                         name: "C".to_string(),
-    //                         members: [
-    //                             (
-    //                                 "a".to_string(),
-    //                                 Type::Int {
-    //                                     signed_flag: true,
-    //                                     array_flag: false,
-    //                                     pointer_flag: false,
-    //                                     location: Some(Location::default()),
-    //                                 },
-    //                             ),
-    //                             (
-    //                                 "b".to_string(),
-    //                                 Type::Float {
-    //                                     array_flag: false,
-    //                                     pointer_flag: false,
-    //                                     location: Some(Location::default()),
-    //                                 },
-    //                             ),
-    //                         ]
-    //                         .iter()
-    //                         .cloned()
-    //                         .collect(),
-    //                         array_flag: false,
-    //                         pointer_flag: false,
-    //                         location: Some(Location::default()),
-    //                     })),
-    //                     declarators: vec![(
-    //                         Rc::new(RefCell::new(Type::Struct {
-    //                             name: "C".to_string(),
-    //                             members: [
-    //                                 (
-    //                                     "a".to_string(),
-    //                                     Type::Int {
-    //                                         signed_flag: true,
-    //                                         array_flag: false,
-    //                                         pointer_flag: false,
-    //                                         location: Some(Location::default()),
-    //                                     },
-    //                                 ),
-    //                                 (
-    //                                     "b".to_string(),
-    //                                     Type::Float {
-    //                                         array_flag: false,
-    //                                         pointer_flag: false,
-    //                                         location: Some(Location::default()),
-    //                                     },
-    //                                 ),
-    //                             ]
-    //                             .iter()
-    //                             .cloned()
-    //                             .collect(),
-    //                             array_flag: false,
-    //                             pointer_flag: false,
-    //                             location: Some(Location::default()),
-    //                         })),
-    //                         "c".to_string(),
-    //                         Some(Expression::InitList {
-    //                             pairs: vec![
-    //                                 (
-    //                                     None,
-    //                                     Expression::IntConst {
-    //                                         value: 1,
-    //                                         location: Location::default(),
-    //                                     },
-    //                                 ),
-    //                                 (
-    //                                     Some("b".to_string()),
-    //                                     Expression::IntConst {
-    //                                         value: 2,
-    //                                         location: Location::default(),
-    //                                     },
-    //                                 ),
-    //                             ],
-    //                             location: Location::default(),
-    //                         }),
-    //                     )],
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::Def {
-    //                     base_type: Rc::new(RefCell::new(Type::Struct {
-    //                         name: "D".to_string(),
-    //                         members: IndexMap::new(),
-    //                         array_flag: false,
-    //                         pointer_flag: false,
-    //                         location: Some(Location::default()),
-    //                     })),
-    //                     declarators: vec![],
-    //                     location: Location::default(),
-    //                 },
-    //             ],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn statement_def_struct() {
+        let source = "
+            void f(void) {
+                struct A {} a;
+                struct A {
+                    int a;
+                } a = { 1 };
+                struct A {
+                    int a;
+                    float b;
+                } a = { 1, .b = 2 };
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::Struct {
+                            name: "A".to_string(),
+                            members: IndexMap::new(),
+                            location: Some(Location::default()),
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::Struct {
+                                name: "A".to_string(),
+                                members: IndexMap::new(),
+                                location: Some(Location::default()),
+                            })),
+                            "a".to_string(),
+                            None,
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::Struct {
+                            name: "A".to_string(),
+                            members: [("a".to_string(), Type::Int(Some(Location::default())))]
+                                .iter()
+                                .cloned()
+                                .collect(),
+                            location: Some(Location::default()),
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::Struct {
+                                name: "A".to_string(),
+                                members: [("a".to_string(), Type::Int(Some(Location::default())))]
+                                    .iter()
+                                    .cloned()
+                                    .collect(),
+                                location: Some(Location::default()),
+                            })),
+                            "a".to_string(),
+                            Some(Expression::InitList {
+                                initializers: vec![(
+                                    None,
+                                    Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    },
+                                )],
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::Struct {
+                            name: "A".to_string(),
+                            members: [
+                                ("a".to_string(), Type::Int(Some(Location::default()))),
+                                ("b".to_string(), Type::Float(Some(Location::default()))),
+                            ]
+                            .iter()
+                            .cloned()
+                            .collect(),
+                            location: Some(Location::default()),
+                        })),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::Struct {
+                                name: "A".to_string(),
+                                members: [
+                                    ("a".to_string(), Type::Int(Some(Location::default()))),
+                                    ("b".to_string(), Type::Float(Some(Location::default()))),
+                                ]
+                                .iter()
+                                .cloned()
+                                .collect(),
+                                location: Some(Location::default()),
+                            })),
+                            "a".to_string(),
+                            Some(Expression::InitList {
+                                initializers: vec![
+                                    (
+                                        None,
+                                        Expression::IntConst {
+                                            value: 1,
+                                            location: Location::default(),
+                                        },
+                                    ),
+                                    (
+                                        Some("b".to_string()),
+                                        Expression::IntConst {
+                                            value: 2,
+                                            location: Location::default(),
+                                        },
+                                    ),
+                                ],
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn statement_while() {
-    //     let source = "
-    //         void f() {
-    //             while (1) ;
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![Statement::While {
-    //                 condition: Expression::IntConst {
-    //                     value: 1,
-    //                     location: Location::default(),
-    //                 },
-    //                 body: Box::new(Statement::Null(Location::default())),
-    //                 location: Location::default(),
-    //             }],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn statement_while() {
+        let source = "
+            void f(void) {
+                while (1) ;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![Statement::While {
+                    condition: Expression::IntConst {
+                        value: 1,
+                        location: Location::default(),
+                    },
+                    body: Box::new(Statement::Null(Location::default())),
+                    location: Location::default(),
+                }],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn statement_do() {
-    //     let source = "
-    //         void f() {
-    //             do ; while (1);
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![Statement::Do {
-    //                 condition: Expression::IntConst {
-    //                     value: 1,
-    //                     location: Location::default(),
-    //                 },
-    //                 body: Box::new(Statement::Null(Location::default())),
-    //                 location: Location::default(),
-    //             }],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn statement_do() {
+        let source = "
+            void f(void) {
+                do ; while (1);
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![Statement::Do {
+                    condition: Expression::IntConst {
+                        value: 1,
+                        location: Location::default(),
+                    },
+                    body: Box::new(Statement::Null(Location::default())),
+                    location: Location::default(),
+                }],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn statement_for() {
-    //     let source = "
-    //         void f(int a) {
-    //             for ( ; ; ) ;
-    //             for (a = 1; 1; a++) ;
-    //             for (int b = 1; 1; b++) ;
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: [(
-    //             "a".to_string(),
-    //             Rc::new(RefCell::new(Type::Int {
-    //                 signed_flag: true,
-    //                 array_flag: false,
-    //                 pointer_flag: false,
-    //                 location: Some(Location::default()),
-    //             })),
-    //         )]
-    //         .iter()
-    //         .cloned()
-    //         .collect(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![
-    //                 Statement::For {
-    //                     initialization: None,
-    //                     condition: None,
-    //                     increment: None,
-    //                     body: Box::new(Statement::Null(Location::default())),
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::For {
-    //                     initialization: Some(Box::new(Statement::Expr(Expression::Infix {
-    //                         left: Box::new(Expression::Ident {
-    //                             value: "a".to_string(),
-    //                             location: Location::default(),
-    //                         }),
-    //                         operator: "=",
-    //                         right: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                     }))),
-    //                     condition: Some(Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     }),
-    //                     increment: Some(Expression::Suffix {
-    //                         operator: "++",
-    //                         expression: Box::new(Expression::Ident {
-    //                             value: "a".to_string(),
-    //                             location: Location::default(),
-    //                         }),
-    //                     }),
-    //                     body: Box::new(Statement::Null(Location::default())),
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::For {
-    //                     initialization: Some(Box::new(Statement::Def {
-    //                         base_type: Rc::new(RefCell::new(Type::Int {
-    //                             signed_flag: true,
-    //                             array_flag: false,
-    //                             pointer_flag: false,
-    //                             location: Some(Location::default()),
-    //                         })),
-    //                         declarators: vec![(
-    //                             Rc::new(RefCell::new(Type::Int {
-    //                                 signed_flag: true,
-    //                                 array_flag: false,
-    //                                 pointer_flag: false,
-    //                                 location: Some(Location::default()),
-    //                             })),
-    //                             "b".to_string(),
-    //                             Some(Expression::IntConst {
-    //                                 value: 1,
-    //                                 location: Location::default(),
-    //                             }),
-    //                         )],
-    //                         location: Location::default(),
-    //                     })),
-    //                     condition: Some(Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     }),
-    //                     increment: Some(Expression::Suffix {
-    //                         operator: "++",
-    //                         expression: Box::new(Expression::Ident {
-    //                             value: "b".to_string(),
-    //                             location: Location::default(),
-    //                         }),
-    //                     }),
-    //                     body: Box::new(Statement::Null(Location::default())),
-    //                     location: Location::default(),
-    //                 },
-    //             ],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn statement_for() {
+        let source = "
+            void f(int a) {
+                for ( ; ; ) ;
+                for (a = 1; 1; a++) ;
+                for (int b = 1; 1; b++) ;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: [(
+                "a".to_string(),
+                Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
+            )]
+            .iter()
+            .cloned()
+            .collect(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::For {
+                        initialization: None,
+                        condition: None,
+                        increment: None,
+                        body: Box::new(Statement::Null(Location::default())),
+                        location: Location::default(),
+                    },
+                    Statement::For {
+                        initialization: Some(Box::new(Statement::Expr(Expression::Infix {
+                            left: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                            operator: "=",
+                            right: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        }))),
+                        condition: Some(Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        }),
+                        increment: Some(Expression::Postfix {
+                            operator: "++",
+                            expression: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                        }),
+                        body: Box::new(Statement::Null(Location::default())),
+                        location: Location::default(),
+                    },
+                    Statement::For {
+                        initialization: Some(Box::new(Statement::Def {
+                            base_type: Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
+                            declarators: vec![(
+                                Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
+                                "b".to_string(),
+                                Some(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                            )],
+                            location: Location::default(),
+                        })),
+                        condition: Some(Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        }),
+                        increment: Some(Expression::Postfix {
+                            operator: "++",
+                            expression: Box::new(Expression::Ident {
+                                value: "b".to_string(),
+                                location: Location::default(),
+                            }),
+                        }),
+                        body: Box::new(Statement::Null(Location::default())),
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn statement_if() {
-    //     let source = "
-    //         void f() {
-    //             if (1) ;
-    //             if (1) ; else ;
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![
-    //                 Statement::If {
-    //                     condition: Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     },
-    //                     body: Box::new(Statement::Null(Location::default())),
-    //                     alternative: None,
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::If {
-    //                     condition: Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     },
-    //                     body: Box::new(Statement::Null(Location::default())),
-    //                     alternative: Some(Box::new(Statement::Null(Location::default()))),
-    //                     location: Location::default(),
-    //                 },
-    //             ],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn statement_if() {
+        let source = "
+            void f(void) {
+                if (1) ;
+                if (1) ; else ;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::If {
+                        condition: Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        },
+                        body: Box::new(Statement::Null(Location::default())),
+                        alternative: None,
+                        location: Location::default(),
+                    },
+                    Statement::If {
+                        condition: Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        },
+                        body: Box::new(Statement::Null(Location::default())),
+                        alternative: Some(Box::new(Statement::Null(Location::default()))),
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn statement_switch() {
-    //     let source = "
-    //         void f() {
-    //             switch (1) {}
-    //             switch (1) {
-    //                 case 1: ;
-    //             }
-    //             switch (1) {
-    //                 case 1: ;
-    //                 default: ;
-    //             }
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![
-    //                 Statement::Switch {
-    //                     expression: Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     },
-    //                     branches: vec![],
-    //                     default: None,
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::Switch {
-    //                     expression: Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     },
-    //                     branches: vec![(
-    //                         Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         },
-    //                         vec![Statement::Null(Location::default())],
-    //                     )],
-    //                     default: None,
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::Switch {
-    //                     expression: Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     },
-    //                     branches: vec![(
-    //                         Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         },
-    //                         vec![Statement::Null(Location::default())],
-    //                     )],
-    //                     default: Some(vec![Statement::Null(Location::default())]),
-    //                     location: Location::default(),
-    //                 },
-    //             ],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn statement_switch() {
+        let source = "
+            void f(void) {
+                switch (1) {}
+                switch (1) {
+                    case 1: ;
+                }
+                switch (1) {
+                    case 1: ;
+                    default: ;
+                }
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Switch {
+                        expression: Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        },
+                        branches: vec![],
+                        default: None,
+                        location: Location::default(),
+                    },
+                    Statement::Switch {
+                        expression: Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        },
+                        branches: vec![(
+                            Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            },
+                            vec![Statement::Null(Location::default())],
+                        )],
+                        default: None,
+                        location: Location::default(),
+                    },
+                    Statement::Switch {
+                        expression: Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        },
+                        branches: vec![(
+                            Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            },
+                            vec![Statement::Null(Location::default())],
+                        )],
+                        default: Some(vec![Statement::Null(Location::default())]),
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn expression_ident_const() {
-    //     let source = "
-    //         void f() {
-    //             a;
-    //             1;
-    //             1.1;
-    //             'a';
-    //             \"a\";
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![
-    //                 Statement::Expr(Expression::Ident {
-    //                     value: "a".to_string(),
-    //                     location: Location::default(),
-    //                 }),
-    //                 Statement::Expr(Expression::IntConst {
-    //                     value: 1,
-    //                     location: Location::default(),
-    //                 }),
-    //                 Statement::Expr(Expression::FloatConst {
-    //                     value: 1.1,
-    //                     location: Location::default(),
-    //                 }),
-    //                 Statement::Expr(Expression::CharConst {
-    //                     value: "'a'".to_string(),
-    //                     location: Location::default(),
-    //                 }),
-    //                 Statement::Expr(Expression::StrConst {
-    //                     value: "\"a\"".to_string(),
-    //                     location: Location::default(),
-    //                 }),
-    //             ],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn expression_ident_const() {
+        let source = "
+            void f(void) {
+                a;
+                1;
+                1.1;
+                'a';
+                \"a\";
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Expr(Expression::Ident {
+                        value: "a".to_string(),
+                        location: Location::default(),
+                    }),
+                    Statement::Expr(Expression::IntConst {
+                        value: 1,
+                        location: Location::default(),
+                    }),
+                    Statement::Expr(Expression::FloatConst {
+                        value: 1.1,
+                        location: Location::default(),
+                    }),
+                    Statement::Expr(Expression::CharConst {
+                        value: "'a'".to_string(),
+                        location: Location::default(),
+                    }),
+                    Statement::Expr(Expression::StrConst {
+                        value: "\"a\"".to_string(),
+                        location: Location::default(),
+                    }),
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn expression_arithmetic() {
-    //     let source = "
-    //         void f() {
-    //             1 = ++1 + (--1 - 1++) * 1-- / 1 % 1;
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![Statement::Expr(Expression::Infix {
-    //                 left: Box::new(Expression::IntConst {
-    //                     value: 1,
-    //                     location: Location::default(),
-    //                 }),
-    //                 operator: "=",
-    //                 right: Box::new(Expression::Infix {
-    //                     left: Box::new(Expression::Prefix {
-    //                         operator: "++",
-    //                         expression: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                         location: Location::default(),
-    //                     }),
-    //                     operator: "+",
-    //                     right: Box::new(Expression::Infix {
-    //                         left: Box::new(Expression::Infix {
-    //                             left: Box::new(Expression::Infix {
-    //                                 left: Box::new(Expression::Group {
-    //                                     expression: Box::new(Expression::Infix {
-    //                                         left: Box::new(Expression::Prefix {
-    //                                             operator: "--",
-    //                                             location: Location::default(),
-    //                                             expression: Box::new(Expression::IntConst {
-    //                                                 value: 1,
-    //                                                 location: Location::default(),
-    //                                             }),
-    //                                         }),
-    //                                         operator: "-",
-    //                                         right: Box::new(Expression::Suffix {
-    //                                             operator: "++",
-    //                                             expression: Box::new(Expression::IntConst {
-    //                                                 value: 1,
-    //                                                 location: Location::default(),
-    //                                             }),
-    //                                         }),
-    //                                     }),
-    //                                     location: Location::default(),
-    //                                 }),
-    //                                 operator: "*",
-    //                                 right: Box::new(Expression::Suffix {
-    //                                     operator: "--",
-    //                                     expression: Box::new(Expression::IntConst {
-    //                                         value: 1,
-    //                                         location: Location::default(),
-    //                                     }),
-    //                                 }),
-    //                             }),
-    //                             operator: "/",
-    //                             right: Box::new(Expression::IntConst {
-    //                                 value: 1,
-    //                                 location: Location::default(),
-    //                             }),
-    //                         }),
-    //                         operator: "%",
-    //                         right: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                     }),
-    //                 }),
-    //             })],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn expression_arithmetic() {
+        let source = "
+            void f(void) {
+                1 = ++1 + (--1 - 1++) * 1-- / 1 % 1;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![Statement::Expr(Expression::Infix {
+                    left: Box::new(Expression::IntConst {
+                        value: 1,
+                        location: Location::default(),
+                    }),
+                    operator: "=",
+                    right: Box::new(Expression::Infix {
+                        left: Box::new(Expression::Prefix {
+                            operator: "++",
+                            expression: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                            location: Location::default(),
+                        }),
+                        operator: "+",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Infix {
+                                left: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::Group {
+                                        expression: Box::new(Expression::Infix {
+                                            left: Box::new(Expression::Prefix {
+                                                operator: "--",
+                                                location: Location::default(),
+                                                expression: Box::new(Expression::IntConst {
+                                                    value: 1,
+                                                    location: Location::default(),
+                                                }),
+                                            }),
+                                            operator: "-",
+                                            right: Box::new(Expression::Postfix {
+                                                operator: "++",
+                                                expression: Box::new(Expression::IntConst {
+                                                    value: 1,
+                                                    location: Location::default(),
+                                                }),
+                                            }),
+                                        }),
+                                        location: Location::default(),
+                                    }),
+                                    operator: "*",
+                                    right: Box::new(Expression::Postfix {
+                                        operator: "--",
+                                        expression: Box::new(Expression::IntConst {
+                                            value: 1,
+                                            location: Location::default(),
+                                        }),
+                                    }),
+                                }),
+                                operator: "/",
+                                right: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                            }),
+                            operator: "%",
+                            right: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        }),
+                    }),
+                })],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn expression_relational() {
-    //     let source = "
-    //         void f() {
-    //             !1 == 1 || 1 != 1 && 1 < 1 > 1 <= 1 >= 1;
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![Statement::Expr(Expression::Infix {
-    //                 left: Box::new(Expression::Infix {
-    //                     left: Box::new(Expression::Prefix {
-    //                         operator: "!",
-    //                         expression: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                         location: Location::default(),
-    //                     }),
-    //                     operator: "==",
-    //                     right: Box::new(Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     }),
-    //                 }),
-    //                 operator: "||",
-    //                 right: Box::new(Expression::Infix {
-    //                     left: Box::new(Expression::Infix {
-    //                         left: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                         operator: "!=",
-    //                         right: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                     }),
-    //                     operator: "&&",
-    //                     right: Box::new(Expression::Infix {
-    //                         left: Box::new(Expression::Infix {
-    //                             left: Box::new(Expression::Infix {
-    //                                 left: Box::new(Expression::Infix {
-    //                                     left: Box::new(Expression::IntConst {
-    //                                         value: 1,
-    //                                         location: Location::default(),
-    //                                     }),
-    //                                     operator: "<",
-    //                                     right: Box::new(Expression::IntConst {
-    //                                         value: 1,
-    //                                         location: Location::default(),
-    //                                     }),
-    //                                 }),
-    //                                 operator: ">",
-    //                                 right: Box::new(Expression::IntConst {
-    //                                     value: 1,
-    //                                     location: Location::default(),
-    //                                 }),
-    //                             }),
-    //                             operator: "<=",
-    //                             right: Box::new(Expression::IntConst {
-    //                                 value: 1,
-    //                                 location: Location::default(),
-    //                             }),
-    //                         }),
-    //                         operator: ">=",
-    //                         right: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                     }),
-    //                 }),
-    //             })],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn expression_relational() {
+        let source = "
+            void f(void) {
+                1 == 1 >= 1 || 1 != 1 <= 1 && 1 < 1 > !1;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![Statement::Expr(Expression::Infix {
+                    left: Box::new(Expression::Infix {
+                        left: Box::new(Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        }),
+                        operator: "==",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                            operator: ">=",
+                            right: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        }),
+                    }),
+                    operator: "||",
+                    right: Box::new(Expression::Infix {
+                        left: Box::new(Expression::Infix {
+                            left: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                            operator: "!=",
+                            right: Box::new(Expression::Infix {
+                                left: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                                operator: "<=",
+                                right: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                            }),
+                        }),
+                        operator: "&&",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Infix {
+                                left: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                                operator: "<",
+                                right: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                            }),
+                            operator: ">",
+                            right: Box::new(Expression::Prefix {
+                                operator: "!",
+                                expression: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                                location: Location::default(),
+                            }),
+                        }),
+                    }),
+                })],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn expression_compound_assignment() {
-    //     let source = "
-    //         void f() {
-    //             1 += 1 -= 1 *= 1 /= 1 %= 1;
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![Statement::Expr(Expression::Infix {
-    //                 left: Box::new(Expression::IntConst {
-    //                     value: 1,
-    //                     location: Location::default(),
-    //                 }),
-    //                 operator: "+=",
-    //                 right: Box::new(Expression::Infix {
-    //                     left: Box::new(Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     }),
-    //                     operator: "-=",
-    //                     right: Box::new(Expression::Infix {
-    //                         left: Box::new(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                         operator: "*=",
-    //                         right: Box::new(Expression::Infix {
-    //                             left: Box::new(Expression::IntConst {
-    //                                 value: 1,
-    //                                 location: Location::default(),
-    //                             }),
-    //                             operator: "/=",
-    //                             right: Box::new(Expression::Infix {
-    //                                 left: Box::new(Expression::IntConst {
-    //                                     value: 1,
-    //                                     location: Location::default(),
-    //                                 }),
-    //                                 operator: "%=",
-    //                                 right: Box::new(Expression::IntConst {
-    //                                     value: 1,
-    //                                     location: Location::default(),
-    //                                 }),
-    //                             }),
-    //                         }),
-    //                     }),
-    //                 }),
-    //             })],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn expression_compound_assignment() {
+        let source = "
+            void f(void) {
+                1 += 1 -= 1 *= 1 /= 1 %= 1;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![Statement::Expr(Expression::Infix {
+                    left: Box::new(Expression::IntConst {
+                        value: 1,
+                        location: Location::default(),
+                    }),
+                    operator: "+=",
+                    right: Box::new(Expression::Infix {
+                        left: Box::new(Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        }),
+                        operator: "-=",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                            operator: "*=",
+                            right: Box::new(Expression::Infix {
+                                left: Box::new(Expression::IntConst {
+                                    value: 1,
+                                    location: Location::default(),
+                                }),
+                                operator: "/=",
+                                right: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    }),
+                                    operator: "%=",
+                                    right: Box::new(Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    }),
+                                }),
+                            }),
+                        }),
+                    }),
+                })],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn index_call_pointer() {
-    //     let source = "void f() {
-    //         a[0];
-    //         a(0);
-    //         a + *a + &a + a->a;
-    //     }";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-    //         name: "f".to_string(),
-    //         parameters: IndexMap::new(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![
-    //                 Statement::Expr(Expression::Index {
-    //                     expression: Box::new(Expression::Ident {
-    //                         value: "a".to_string(),
-    //                         location: Location::default(),
-    //                     }),
-    //                     index: Box::new(Expression::IntConst {
-    //                         value: 0,
-    //                         location: Location::default(),
-    //                     }),
-    //                 }),
-    //                 Statement::Expr(Expression::Call {
-    //                     expression: Box::new(Expression::Ident {
-    //                         value: "a".to_string(),
-    //                         location: Location::default(),
-    //                     }),
-    //                     arguments: vec![Expression::IntConst {
-    //                         value: 0,
-    //                         location: Location::default(),
-    //                     }],
-    //                 }),
-    //                 Statement::Expr(Expression::Infix {
-    //                     left: Box::new(Expression::Infix {
-    //                         left: Box::new(Expression::Infix {
-    //                             left: Box::new(Expression::Ident {
-    //                                 value: "a".to_string(),
-    //                                 location: Location::default(),
-    //                             }),
-    //                             operator: "+",
-    //                             right: Box::new(Expression::Prefix {
-    //                                 operator: "*",
-    //                                 expression: Box::new(Expression::Ident {
-    //                                     value: "a".to_string(),
-    //                                     location: Location::default(),
-    //                                 }),
-    //                                 location: Location::default(),
-    //                             }),
-    //                         }),
-    //                         operator: "+",
-    //                         right: Box::new(Expression::Prefix {
-    //                             operator: "&",
-    //                             expression: Box::new(Expression::Ident {
-    //                                 value: "a".to_string(),
-    //                                 location: Location::default(),
-    //                             }),
-    //                             location: Location::default(),
-    //                         }),
-    //                     }),
-    //                     operator: "+",
-    //                     right: Box::new(Expression::Infix {
-    //                         left: Box::new(Expression::Ident {
-    //                             value: "a".to_string(),
-    //                             location: Location::default(),
-    //                         }),
-    //                         operator: "->",
-    //                         right: Box::new(Expression::Ident {
-    //                             value: "a".to_string(),
-    //                             location: Location::default(),
-    //                         }),
-    //                     }),
-    //                 }),
-    //             ],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn index_call_pointer_struct() {
+        let source = "
+            void f(void) {
+                a[0];
+                a(0);
+                a.a + *a + &a + a->a;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Expr(Expression::Index {
+                        expression: Box::new(Expression::Ident {
+                            value: "a".to_string(),
+                            location: Location::default(),
+                        }),
+                        index: Box::new(Expression::IntConst {
+                            value: 0,
+                            location: Location::default(),
+                        }),
+                    }),
+                    Statement::Expr(Expression::Call {
+                        expression: Box::new(Expression::Ident {
+                            value: "a".to_string(),
+                            location: Location::default(),
+                        }),
+                        arguments: vec![Expression::IntConst {
+                            value: 0,
+                            location: Location::default(),
+                        }],
+                    }),
+                    Statement::Expr(Expression::Infix {
+                        left: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Infix {
+                                left: Box::new(Expression::Infix {
+                                    left: Box::new(Expression::Ident {
+                                        value: "a".to_string(),
+                                        location: Location::default(),
+                                    }),
+                                    operator: ".",
+                                    right: Box::new(Expression::Ident {
+                                        value: "a".to_string(),
+                                        location: Location::default(),
+                                    }),
+                                }),
+                                operator: "+",
+                                right: Box::new(Expression::Prefix {
+                                    operator: "*",
+                                    expression: Box::new(Expression::Ident {
+                                        value: "a".to_string(),
+                                        location: Location::default(),
+                                    }),
+                                    location: Location::default(),
+                                }),
+                            }),
+                            operator: "+",
+                            right: Box::new(Expression::Prefix {
+                                operator: "&",
+                                expression: Box::new(Expression::Ident {
+                                    value: "a".to_string(),
+                                    location: Location::default(),
+                                }),
+                                location: Location::default(),
+                            }),
+                        }),
+                        operator: "+",
+                        right: Box::new(Expression::Infix {
+                            left: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                            operator: "->",
+                            right: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                        }),
+                    }),
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn dummy_type() {
-    //     let source = "
-    //         f(a) {
-    //             a = 1;
-    //             b = 1;
-    //             c[1] = { 1 }; // allow empty index
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-    //         return_type: Rc::new(RefCell::new(Type::T {
-    //             array_flag: false,
-    //             pointer_flag: false,
-    //             specialized: None,
-    //         })),
-    //         name: "f".to_string(),
-    //         parameters: [(
-    //             "a".to_string(),
-    //             Rc::new(RefCell::new(Type::T {
-    //                 array_flag: false,
-    //                 pointer_flag: false,
-    //                 specialized: None,
-    //             })),
-    //         )]
-    //         .iter()
-    //         .cloned()
-    //         .collect(),
-    //         ellipsis: false,
-    //         body: Statement::Block {
-    //             statements: vec![
-    //                 Statement::Expr(Expression::Infix {
-    //                     left: Box::new(Expression::Ident {
-    //                         value: "a".to_string(),
-    //                         location: Location::default(),
-    //                     }),
-    //                     operator: "=",
-    //                     right: Box::new(Expression::IntConst {
-    //                         value: 1,
-    //                         location: Location::default(),
-    //                     }),
-    //                 }),
-    //                 Statement::Def {
-    //                     base_type: Rc::new(RefCell::new(Type::T {
-    //                         array_flag: false,
-    //                         pointer_flag: false,
-    //                         specialized: None,
-    //                     })),
-    //                     declarators: vec![(
-    //                         Rc::new(RefCell::new(Type::T {
-    //                             array_flag: false,
-    //                             pointer_flag: false,
-    //                             specialized: None,
-    //                         })),
-    //                         "b".to_string(),
-    //                         Some(Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }),
-    //                     )],
-    //                     location: Location::default(),
-    //                 },
-    //                 Statement::Def {
-    //                     base_type: Rc::new(RefCell::new(Type::T {
-    //                         array_flag: false,
-    //                         pointer_flag: false,
-    //                         specialized: None,
-    //                     })),
-    //                     declarators: vec![(
-    //                         Rc::new(RefCell::new(Type::T {
-    //                             array_flag: true,
-    //                             pointer_flag: false,
-    //                             specialized: None,
-    //                         })),
-    //                         "c".to_string(),
-    //                         Some(Expression::InitList {
-    //                             pairs: vec![(
-    //                                 None,
-    //                                 Expression::IntConst {
-    //                                     value: 1,
-    //                                     location: Location::default(),
-    //                                 },
-    //                             )],
-    //                             location: Location::default(),
-    //                         }),
-    //                     )],
-    //                     location: Location::default(),
-    //                 },
-    //             ],
-    //             location: Location::default(),
-    //         },
-    //         location: Location::default(),
-    //     }))];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(generic_ast, expected_generic_ast);
-    // }
+    #[test]
+    fn dummy_type() {
+        let source = "
+            f(a) {
+                a = 1;
+                b = 1;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::T(None))),
+            name: "f".to_string(),
+            parameters: [("a".to_string(), Rc::new(RefCell::new(Type::T(None))))]
+                .iter()
+                .cloned()
+                .collect(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Expr(Expression::Infix {
+                        left: Box::new(Expression::Ident {
+                            value: "a".to_string(),
+                            location: Location::default(),
+                        }),
+                        operator: "=",
+                        right: Box::new(Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        }),
+                    }),
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T(None))),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T(None))),
+                            "b".to_string(),
+                            Some(Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
 
-    // #[test]
-    // fn error_recovery() {
-    //     let source = "
-    //         void f() {
-    //             break
-    //             continue;
-    //         }
-    //     ";
-    //     let expected_errors = vec![Error::Parsing {
-    //         message: "Fail to assert `Token::Semicolon` here.".to_string(),
-    //         location: Location::default(),
-    //     }];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     Parser::new(tokens, &mut errors).run().unwrap_err();
-    //     assert_eq!(errors, expected_errors);
-    // }
+    #[test]
+    fn error_recovery() {
+        let source = "
+            void f(void) {
+                break
+                continue;
+            }
+        ";
+        let expected_errors = vec![Error::Parsing {
+            message: "Fail to assert `Token::Semicolon` here.".to_string(),
+            location: Location::default(),
+        }];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        Parser::new(tokens, &mut errors).run().unwrap_err();
+        assert_eq!(errors, expected_errors);
+    }
 }

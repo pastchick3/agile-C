@@ -221,6 +221,7 @@ pub enum Type {
     },
     Array {
         content: Box<Type>,
+        length: Option<usize>,
         location: Option<Location>,
     },
     Null,
@@ -319,7 +320,7 @@ impl Type {
     ///
     /// We treat `right` as the comparision base, which means if this function
     /// returns `Super`, then `left` is a supertype of `right`.
-    pub fn compare_types(mut left: &Type, mut right: &Type) -> TypeRelationship {
+    pub fn compare_types(left: &Type, right: &Type) -> TypeRelationship {
         use Type::*;
         use TypeRelationship::*;
 
