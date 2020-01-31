@@ -147,6 +147,11 @@ impl Serializer {
     /// This function will automatically add nothing when done.
     fn serialize_pointer_marker(&mut self, type_: &Type) {
         match type_ {
+            Type::Array { content, .. } => {
+                // In a complex type combining arrays and pointers,
+                // pointers are nested deeper than arrays.
+                self.serialize_pointer_marker(content);
+            }
             Type::Pointer { refer, .. } => {
                 self.serialize_pointer_marker(refer);
                 self.push_str("*");
@@ -526,6 +531,8 @@ void f(int a, unsigned int b) {}
                 unsigned long h;
                 float i = 1;
                 double j, k = 1;
+
+                int **arr[1][2];
                 
                 struct A {} a1;
                 struct B {
@@ -585,6 +592,7 @@ void f(int a, unsigned int b) {}
     unsigned long h;
     float i = 1;
     double j, k = 1;
+    int **arr[1][2];
     struct A {} a1;
     struct B {
         int a;

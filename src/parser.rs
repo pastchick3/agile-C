@@ -745,7 +745,7 @@ impl<'a> Parser<'a> {
         loop {
             // Check for pointer types.
             let mut type_ = base_type.clone();
-            if let Some(Token::Asterisk(_)) = self.tokens.last() {
+            while let Some(Token::Asterisk(_)) = self.tokens.last() {
                 let location = self.tokens.pop().unwrap().locate();
                 type_ = Type::Pointer {
                     refer: Box::new(type_),
@@ -758,7 +758,7 @@ impl<'a> Parser<'a> {
                 Some(Token::Ident { literal, .. }) => {
                     self.environment.define(&literal);
                     // Check for array types.
-                    if let Some(Token::LBracket(_)) = self.tokens.last() {
+                    while let Some(Token::LBracket(_)) = self.tokens.last() {
                         let location = self.tokens.pop().unwrap().locate();
                         let mut length = None;
                         match self.tokens.last() {
@@ -1887,6 +1887,57 @@ mod tests {
                         location: Location::default(),
                     },
                 ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
+    fn statement_def_nested() {
+        let source = "
+            void f(void) {
+                int **a[1][2];
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![Statement::Def {
+                    base_type: Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
+                    declarators: vec![(
+                        Rc::new(RefCell::new(Type::Array {
+                            content: Box::new(Type::Array {
+                                content: Box::new(Type::Pointer {
+                                    refer: Box::new(Type::Pointer {
+                                        refer: Box::new(Type::Int(Some(Location::default()))),
+                                        location: Some(Location::default()),
+                                    }),
+                                    location: Some(Location::default()),
+                                }),
+                                length: Some(1),
+                                location: Some(Location::default()),
+                            }),
+                            length: Some(2),
+                            location: Some(Location::default()),
+                        })),
+                        "a".to_string(),
+                        None,
+                    )],
+                    location: Location::default(),
+                }],
                 location: Location::default(),
             },
             location: Location::default(),
