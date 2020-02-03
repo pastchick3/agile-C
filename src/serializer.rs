@@ -57,6 +57,7 @@ impl Serializer {
                 self.pop_char();
                 self.push_str_newline(";");
             }
+            StaticObject::Statement(stmt) => self.serialize_statement(stmt),
             StaticObject::Function(func) => self.serialize_function(func),
         }
         self.push_str_newline("");
@@ -196,6 +197,7 @@ impl Serializer {
             }
             Statement::Continue(_) => self.push_str_newline("continue;"),
             Statement::Break(_) => self.push_str_newline("break;"),
+            Statement::Include { content, .. } => self.push_str_newline(content),
             Statement::Return { expression, .. } => match expression {
                 Some(expr) => {
                     self.push_str_space("return");
@@ -486,6 +488,25 @@ mod tests {
     }
 
     #[test]
+    fn include() {
+        let source = "
+            #include <_test>
+        ";
+        let expected_errors = vec![];
+        let expected_transformed_source = "#include <_test>\n";
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        let transformed_source = Serializer::new(ast).run();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(&transformed_source, expected_transformed_source);
+    }
+
+    #[test]
     fn function() {
         let source = "
             int *f() {}
@@ -548,6 +569,8 @@ void f(int a, unsigned int b) {}
             }
             
             int m(int a) {
+                #include <_test>
+
                 while (1) {
                     continue;
                 }
@@ -606,6 +629,7 @@ void f(int a, unsigned int b) {}
 }
 
 int m(int a) {
+    #include <_test>
     while (1) {
         continue;
     }

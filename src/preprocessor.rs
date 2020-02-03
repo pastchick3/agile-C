@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 
 use regex::Regex;
@@ -11,6 +12,7 @@ pub struct Preprocessor<'a> {
     source: &'a str,
     errors: &'a mut Vec<Error>,
     include_regex: Regex, // regular expression that matches `#include`
+    included: HashSet<(String, usize)>, // `#include <*>` that has been processed
 }
 
 impl<'a> Preprocessor<'a> {
@@ -20,6 +22,7 @@ impl<'a> Preprocessor<'a> {
             source,
             errors,
             include_regex: Regex::new("^\\s*#include\\s+(\"|<)(.+)(\"|>)").unwrap(),
+            included: HashSet::new(),
         }
     }
 
@@ -68,7 +71,10 @@ impl<'a> Preprocessor<'a> {
         modification: &mut bool,
         (file_name, line_index, line): (String, usize, String),
     ) -> Vec<(String, usize, String)> {
-        if let Some(caps) = self.include_regex.captures(&line) {
+        if self.included.contains(&(file_name.clone(), line_index)) {
+            // Return a line that has been included without modifications.
+            vec![(file_name, line_index, line)]
+        } else if let Some(caps) = self.include_regex.captures(&line) {
             *modification = true;
             // Extract the file name.
             let left_delimiter = caps.get(1).unwrap().as_str();
@@ -76,18 +82,25 @@ impl<'a> Preprocessor<'a> {
             let right_delimiter = caps.get(3).unwrap().as_str();
             if left_delimiter == "<" && right_delimiter == ">" {
                 // Include a C standard library.
+                // Also notice we do not remove the original line.
                 match cstdlib::get_library(included_file_name) {
-                    Some(source) => source
-                        .lines()
-                        .enumerate()
-                        .map(|(included_line_index, line)| {
-                            (
-                                included_file_name.to_string(),
-                                included_line_index,
-                                line.to_string(),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
+                    Some(source) => {
+                        self.included.insert((file_name.clone(), line_index));
+                        let mut lines = vec![(file_name, line_index, line.to_string())];
+                        let mut extended: Vec<_> = source
+                            .lines()
+                            .enumerate()
+                            .map(|(included_line_index, line)| {
+                                (
+                                    included_file_name.to_string(),
+                                    included_line_index,
+                                    line.to_string(),
+                                )
+                            })
+                            .collect();
+                        lines.append(&mut extended);
+                        lines
+                    }
                     None => {
                         let message = format!(
                             "The standard library `{}` is not available.",
@@ -173,7 +186,10 @@ mod tests {
     fn include_cstdlib() {
         let source = "#include <_test>";
         let expected_errors = vec![];
-        let expected_lines = vec![("_test".to_string(), 0, "_test".to_string())];
+        let expected_lines = vec![
+            ("file".to_string(), 0, "#include <_test>".to_string()),
+            ("_test".to_string(), 0, "//".to_string()),
+        ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()

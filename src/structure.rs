@@ -94,6 +94,7 @@ pub enum Token {
     CharConst { literal: String, location: Location },
     StrConst { literal: String, location: Location },
     Comment { literal: String, location: Location },
+    Include { literal: String, location: Location },
 
     Void(Location),
     Char(Location),
@@ -169,7 +170,8 @@ impl Locate for Token {
             | FloatConst { location, .. }
             | CharConst { location, .. }
             | StrConst { location, .. }
-            | Comment { location, .. } => location.clone(),
+            | Comment { location, .. }
+            | Include { location, .. } => location.clone(),
 
             Void(loc) | Char(loc) | Short(loc) | Int(loc) | Long(loc) | Float(loc)
             | Double(loc) | Signed(loc) | Unsigned(loc) | Plus(loc) | Minus(loc)
@@ -560,6 +562,10 @@ pub enum Statement {
     Expr(Expression),
     Continue(Location),
     Break(Location),
+    Include {
+        content: String,
+        location: Location,
+    },
     Return {
         expression: Option<Expression>,
         location: Location,
@@ -612,6 +618,7 @@ impl Locate for Statement {
             Null(loc) | Continue(loc) | Break(loc) => loc.clone(),
             Expr(expr) => expr.locate(),
             Return { location, .. }
+            | Include { location, .. }
             | Block { location, .. }
             | Def { location, .. }
             | While { location, .. }
@@ -644,5 +651,6 @@ impl Locate for Function {
 #[derive(Debug, PartialEq)]
 pub enum StaticObject {
     Type(Type),              // structures
+    Statement(Statement),    // #include
     Function(Box<Function>), // Boxing the large field to reduce the total size of the enum.
 }

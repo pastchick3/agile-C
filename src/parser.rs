@@ -121,6 +121,17 @@ impl<'a> Parser<'a> {
                         Err(_) => self.tokens.clear(),
                     }
                 }
+                Some(Token::Include { literal, location }) => {
+                    let include = Statement::Include {
+                        content: literal.to_string(),
+                        location: location.clone(),
+                    };
+                    self.generic_ast
+                        .as_mut()
+                        .unwrap()
+                        .push(StaticObject::Statement(include));
+                    self.tokens.pop();
+                }
                 Some(_) => match self.parse_function() {
                     Ok(func) => self
                         .generic_ast
@@ -515,6 +526,11 @@ impl<'a> Parser<'a> {
                 self.tokens.push(type_);
                 self.parse_statement_def()
             }
+
+            Some(Token::Include { literal, location }) => Ok(Statement::Include {
+                content: literal,
+                location: location,
+            }),
 
             Some(tk) => {
                 self.tokens.push(tk);
@@ -1254,6 +1270,24 @@ mod tests {
     }
 
     #[test]
+    fn include() {
+        let source = "#include <_test>";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Statement(Statement::Include {
+            content: "#include <_test>".to_string(),
+            location: Location::default(),
+        })];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
     fn return_pointer() {
         let source = "int *f(void) {}";
         let expected_errors = vec![];
@@ -1547,6 +1581,36 @@ mod tests {
                         location: Location::default(),
                     },
                 ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(generic_ast, expected_generic_ast);
+    }
+
+    #[test]
+    fn statement_include() {
+        let source = "void f(void) {
+            #include <_test>
+        }";
+        let expected_errors = vec![];
+        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![Statement::Include {
+                    content: "#include <_test>".to_string(),
+                    location: Location::default(),
+                }],
                 location: Location::default(),
             },
             location: Location::default(),

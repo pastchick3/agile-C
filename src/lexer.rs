@@ -394,6 +394,16 @@ impl<'a> Lexer<'a> {
                 self.forward();
                 Ok(Semicolon(self.get_location()))
             }
+            Some('#') => {
+                while !self.eof && self.line_index == self.last_line_index {
+                    self.forward();
+                }
+                let literal = self.get_literal();
+                Ok(Include {
+                    literal,
+                    location: self.get_location(),
+                })
+            }
             Some(ch) if ch.is_ascii_digit() || ch == '.' => self.read_num(),
             Some('\'') => self.read_char(),
             Some('"') => self.read_str(),
@@ -591,6 +601,29 @@ mod tests {
             }
             _ => panic!(format!("Unexpected token[2]: {:#?}", tokens[2])),
         }
+    }
+
+    #[test]
+    fn include() {
+        let source = "#include <_test>";
+        let expected_errors = vec![];
+        let expected_tokens = vec![
+            Include {
+                literal: "#include <_test>".to_string(),
+                location: Location::default(),
+            },
+            Comment {
+                literal: "//".to_string(),
+                location: Location::default(),
+            },
+        ];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(tokens, expected_tokens);
     }
 
     #[test]
