@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
@@ -8,29 +9,32 @@ use crate::structure::{
     Error, Expression, Function, Locate, Location, Statement, StaticObject, Type, TypeRelationship,
 };
 
+/// Every symbol will be mapped to a type bound.
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 enum Symbol {
     Variable {
-        scope: Option<usize>,
+        scope: usize,
         name: String,
+        location: Location,
     },
     Expression {
-        scope: Option<usize>,
+        scope: usize,
         count: usize,
+        location: Location,
     },
     Parameter {
-        scope: Option<usize>,
+        scope: usize,
         function: String,
         name: String,
     },
     Return {
-        scope: Option<usize>,
+        scope: usize,
         function: String,
     },
 }
 
 impl Symbol {
-    fn get_scope(&self) -> Option<usize> {
+    fn get_scope(&self) -> usize {
         match self {
             Symbol::Variable { scope, .. } => scope.clone(),
             Symbol::Expression { scope, .. } => scope.clone(),
@@ -40,51 +44,61 @@ impl Symbol {
     }
 }
 
-#[derive(Clone, Debug)]
-enum Bound {
-    Type {
-        refer: Type,
-        location: Location
-    },
-    Symbol{
-        refer: Symbol,
-        location: Location
-    },
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Symbol::Variable { name, location, .. } => write!(f, "{} at {}", name, location),
+            Symbol::Expression { location, .. } => write!(f, "Expr at {}", location),
+            Symbol::Parameter { .. } => unreachable!(),
+            Symbol::Return { .. } => unreachable!(),
+        }
+    }
 }
 
+/// A symbol can be bounded by either a concrete type or another symbol.
+#[derive(Clone, Debug)]
+enum Bound {
+    Type { refer: Type, location: Location },
+    Symbol { refer: Symbol, location: Location },
+}
+
+/// Every symbol will be mapped to a type bound.
 #[derive(Clone, Debug)]
 struct TypeBound {
-    upper: Vec<Bound>,
-    lower: Vec<Bound>,
-    infix: Option<(Symbol, Symbol)>,
-    member: Option<String>,
-    ptr_mem: Option<String>,
-    pointer: Option<bool>,
-    bounded: Option<Type>,
-    wrapped: Option<Rc<RefCell<Type>>>,
+    upper: Vec<Bound>,                  // upper bounds
+    lower: Vec<Bound>,                  // lower bounds
+    infix: Option<(Symbol, Symbol)>,    // infix expressions (`Option<(left, right)>`)
+    member: Option<String>,             // structure members using dot operators (`Option<member>`)
+    ptr_mem: Option<String>, // structure members using arrow operators (`Option<member>`)
+    pointer: Option<bool>,   // pointers, true for `&`, false for `*`
+    bounded: Option<Type>,   // concrete types that are determined
+    wrapped: Option<Rc<RefCell<Type>>>, // types in AST that are wrapped
 }
 
 impl TypeBound {
     fn new() -> Self {
-
-    }
-
-    fn wrapped(wrapped: &Rc<RefCell<Type>>) -> Self {
-        let type_ = Type::clone(&wrapped.borrow());
-        let bounded = if let Type::T { .. } = type_ {
-            None
-        } else {
-            Some(type_)
-        };
         TypeBound {
             upper: Vec::new(),
             lower: Vec::new(),
             infix: None,
             member: None,
-            ptr_member: None,
-            reference: false,
-            bounded,
-            wrapped: Some(wrapped),
+            ptr_mem: None,
+            pointer: None,
+            bounded: None,
+            wrapped: None,
+        }
+    }
+
+    fn wrapped(wrapped: &Rc<RefCell<Type>>) -> Self {
+        TypeBound {
+            upper: Vec::new(),
+            lower: Vec::new(),
+            infix: None,
+            member: None,
+            ptr_mem: None,
+            pointer: None,
+            bounded: None,
+            wrapped: Some(Rc::clone(wrapped)),
         }
     }
 
@@ -94,9 +108,9 @@ impl TypeBound {
             lower: Vec::new(),
             infix: None,
             member: None,
-            ptr_member: None,
-            reference: false,
-            bounded: Some(bounded),
+            ptr_mem: None,
+            pointer: None,
+            bounded: Some(bounded.clone()),
             wrapped: None,
         }
     }
@@ -107,8 +121,8 @@ impl TypeBound {
             lower: vec![bound.clone()],
             infix: None,
             member: None,
-            ptr_member: None,
-            reference: false,
+            ptr_mem: None,
+            pointer: None,
             bounded: None,
             wrapped: None,
         }
@@ -118,77 +132,45 @@ impl TypeBound {
         TypeBound {
             upper: Vec::new(),
             lower: Vec::new(),
-            infix: Some((left, right)),
+            infix: Some((left.clone(), right.clone())),
             member: None,
-            ptr_member: None,
-            reference: false,
+            ptr_mem: None,
+            pointer: None,
             bounded: None,
             wrapped: None,
         }
     }
 
-    fn merge(left: &TypeBound, right: &TypeBound, wrapped_flag: &str) -> TypeBound {
-        let bounded = if let (
-            TypeBound {
-                bounded: Some(left),
-                ..
-            },
-            TypeBound {
-                bounded: Some(right),
-                ..
-            },
-        ) = (left, right)
-        {
-            match Type::compare_types(left, right) {
-                TypeRelationship::Sub => Some(right.clone()),
-                TypeRelationship::Super => Some(left.clone()),
-                TypeRelationship::Equal => Some(right.clone()),
-                TypeRelationship::Invalid => None,
-            }
-        } else if let TypeBound {
-            bounded: Some(type_),
-            ..
-        } = left
-        {
-            Some(type_.clone())
-        } else if let TypeBound {
-            bounded: Some(type_),
-            ..
-        } = right
-        {
-            Some(type_.clone())
-        } else {
-            None
-        };
-        let mut upper = left.upper.to_vec();
-        upper.append(&mut right.upper.to_vec());
-        let mut lower = left.lower.to_vec();
-        lower.append(&mut right.lower.to_vec());
-        let wrapped = match wrapped_flag {
-            "left" => left.wrapped.clone(),
-            "right" => right.wrapped.clone(),
-            _ => None,
-        };
+    /// Merge two type bounds.
+    /// It is only used once to merge function symbols, so we
+    /// assume only `upper` and `lower` fields are relevant, and
+    /// we will use left type bound's `wrapped` field.
+    fn merge(left: &TypeBound, right: &TypeBound) -> TypeBound {
+        let mut upper = left.upper.clone();
+        upper.append(&mut right.upper.clone());
+        let mut lower = left.lower.clone();
+        lower.append(&mut right.lower.clone());
         TypeBound {
             upper,
             lower,
             infix: None,
             member: None,
-            ptr_member: None,
-            reference: false,
-            bounded,
-            wrapped,
+            ptr_mem: None,
+            pointer: None,
+            bounded: None,
+            wrapped: left.wrapped.clone(),
         }
     }
 }
 
+/// A structure containing type information in each scope.
 #[derive(Debug)]
 struct Scope {
-    index: usize,
-    outer: Option<usize>,
+    index: usize,         // the id of a scope
+    outer: Option<usize>, // the id of its enclosing scope
     symbols: HashMap<Symbol, TypeBound>,
-    expr_counter: usize,
-    structures: Vec<Type>,
+    expr_counter: usize,   // used to define expression symbols
+    structures: Vec<Type>, // structures defined in this scope
 }
 
 impl Scope {
@@ -203,10 +185,11 @@ impl Scope {
     }
 }
 
+// A structure containing all scopes and information about functions.
 #[derive(Debug)]
 struct SymbolTable {
     current_func: Option<String>,
-    current_scope: Option<usize>,
+    current_scope: usize,
     func_returns: HashMap<String, TypeBound>,
     func_params: HashMap<String, IndexMap<String, TypeBound>>,
     scopes: Vec<Scope>,
@@ -216,45 +199,30 @@ impl SymbolTable {
     fn new() -> Self {
         SymbolTable {
             current_func: None,
-            current_scope: None,
+            current_scope: 0,
             func_returns: HashMap::new(),
             func_params: HashMap::new(),
-            scopes: Vec::new(),
+            scopes: vec![Scope::new(0, None)],
         }
     }
 
-    // fn get_current_scope(&self) -> Option<&Scope> {
-    //     let current = self.current_scope?;
-    //     self.scopes.get(current)
-    // }
-
-    // fn get_scope(&self, index: Option<usize>) -> Option<&Scope> {
-    //     self.scopes.get(index?)
-    // }
-
-    // fn get_current_scope_mut(&mut self) -> Option<&mut Scope> {
-    //     let current = self.current_scope?;
-    //     self.scopes.get_mut(current)
-    // }
-
-    // fn get_scope_mut(&mut self, index: Option<usize>) -> Option<&mut Scope> {
-    //     self.scopes.get_mut(index?)
-    // }
-
+    /// Enter a new scope.
     fn enter_scope(&mut self) {
-        let outer = self.current_scope.clone();
+        let outer = self.current_scope;
         let current = self.scopes.len();
-        self.current_scope = Some(current);
-        self.scopes.push(Scope::new(current, outer));
+        self.current_scope = current;
+        self.scopes.push(Scope::new(current, Some(outer)));
     }
 
+    /// Leave the current scope.
     fn leave_scope(&mut self) {
-        self.current_scope = self
-            .get_current_scope()
-            .expect("Try to leave the global scope.")
-            .outer;
+        self.current_scope = self.scopes[self.current_scope]
+            .outer
+            .expect("Try to leave the top scope.");
     }
 
+    /// Test whether a name stands for a function parameter
+    /// in the current scope.
     fn is_parameter(&self, name: &str) -> bool {
         let current_func = self.current_func.as_ref().unwrap();
         self.func_params
@@ -263,17 +231,27 @@ impl SymbolTable {
             .contains_key(name)
     }
 
-    fn make_expression_symbol(&mut self) -> Symbol {
-        let current_scope = self.current_scope.expect("No scope");
-        let scope = self.get_current_scope_mut().expect("No scope");
+    /// Create an expression symbol in the current scope.
+    fn make_expression_symbol(&mut self, location: &Location) -> Symbol {
+        let scope = &mut self.scopes[self.current_scope];
         let symbol = Symbol::Expression {
-            scope: Some(current_scope),
+            scope: self.current_scope,
             count: scope.expr_counter,
+            location: location.clone(),
         };
         scope.expr_counter += 1;
         symbol
     }
 
+    /// Define a structure in the current scope.
+    fn define_structure(&mut self, structure: &Type) {
+        let scope = &mut self.scopes[self.current_scope];
+        if let Type::Struct { .. } = structure {
+            scope.structures.push(structure.clone());
+        }
+    }
+
+    /// Define a function in the top scope.
     fn define_function(&mut self, function: &Function) {
         let Function {
             return_type,
@@ -282,424 +260,427 @@ impl SymbolTable {
             ..
         } = function;
         self.func_returns
-            .insert(name.clone(), TypeBound::new(Rc::clone(return_type)));
+            .insert(name.clone(), TypeBound::wrapped(return_type));
         let parameters: IndexMap<_, _> = parameters
             .iter()
-            .map(|(param, type_)| (param.clone(), TypeBound::new(Rc::clone(type_))))
+            .map(|(param, type_)| (param.clone(), TypeBound::wrapped(type_)))
             .collect();
         self.func_params.insert(name.clone(), parameters);
     }
 
-    fn define_symbol(&mut self, symbol: Symbol, type_bound: TypeBound) {
-        let scope = self.get_current_scope_mut().expect("No scope");
-        scope.symbols.insert(symbol, type_bound);
+    /// Define a symbol in the current scope.
+    fn define_symbol(&mut self, symbol: &Symbol, type_bound: &TypeBound) {
+        let scope = &mut self.scopes[self.current_scope];
+        scope.symbols.insert(symbol.clone(), type_bound.clone());
     }
 
-    fn define_structure(&mut self, structure: &Type) {
-        let scope = self.get_current_scope_mut().expect("No scope");
-        if let Type::Struct { .. } = structure {
-            scope.structures.push(structure.clone());
-        }
-    }
-
-    fn get_type_bound(&mut self, symbol: &Symbol) -> Option<TypeBound> {
-        let scope = self.get_scope(symbol.get_scope()).expect("None scope");
+    /// Get the corresponding type bound of the given symbol.
+    fn get_type_bound(&self, symbol: &Symbol) -> Option<TypeBound> {
+        let scope = &self.scopes[symbol.get_scope()];
         scope.symbols.get(symbol).cloned()
     }
 
+    /// Update the corresponding type bound of the given symbol.
     fn update_type_bound(&mut self, symbol: Symbol, type_bound: TypeBound) {
-        let index = symbol.get_scope();
-        let scope = self.get_scope_mut(index).expect("No scope.");
+        let scope = &mut self.scopes[symbol.get_scope()];
         scope.symbols.insert(symbol, type_bound);
     }
 
-    // fn get_all_symbols(&self) -> Vec<(Symbol, TypeBound)> {
-    //     self.scopes
-    //         .iter()
-    //         .map(|scope| scope.symbols.clone().into_iter())
-    //         .flatten()
-    //         .collect::<Vec<_>>()
-    // }
+    /// Get all symbols and type bounds in all scopes.
+    fn get_all_symbols(&self) -> Vec<(Symbol, TypeBound)> {
+        self.scopes
+            .iter()
+            .map(|scope| scope.symbols.clone().into_iter())
+            .flatten()
+            .collect()
+    }
 
-    // fn update_global_symbols(&mut self) {
-    //     let symbols = self.get_all_symbols();
-    //     for (symbol, type_bound) in symbols.iter() {
-    //         match symbol {
-    //             Symbol::Parameter { function, name, .. } => {
-    //                 let old_type_bound = self.func_params.get(function).unwrap().get(name).unwrap();
-    //                 let type_bound = TypeBound::merge(old_type_bound, type_bound, "left");
-    //                 self.func_params
-    //                     .get_mut(function)
-    //                     .unwrap()
-    //                     .insert(name.to_string(), type_bound.clone());
-    //             }
-    //             Symbol::Return { function, .. } => {
-    //                 let old_type_bound = self.func_returns.get(function).unwrap();
-    //                 let type_bound = TypeBound::merge(old_type_bound, type_bound, "left");
-    //                 self.func_returns
-    //                     .insert(function.to_string(), type_bound.clone());
-    //             }
-    //             _ => (),
-    //         }
-    //     }
-    //     for (symbol, _) in symbols.into_iter() {
-    //         match &symbol {
-    //             Symbol::Parameter { function, name, .. } => {
-    //                 let type_bound = self
-    //                     .func_params
-    //                     .get(function)
-    //                     .unwrap()
-    //                     .get(name)
-    //                     .unwrap()
-    //                     .clone();
-    //                 self.update_type_bound(symbol, type_bound);
-    //             }
-    //             Symbol::Return { function, .. } => {
-    //                 let type_bound = self.func_returns.get(function).unwrap().clone();
-    //                 self.update_type_bound(symbol, type_bound);
-    //             }
-    //             _ => (),
-    //         }
-    //     }
-    // }
+    /// Resolve all symbols to concrete types.
+    fn resolve_symbols(&mut self, errors: &mut Vec<(String, Location)>) {
+        self.merge_function_symbols();
+        self.implicit_return();
+        let mut modified = true;
+        while modified {
+            modified = false;
+            for (symbol, mut type_bound) in self.get_all_symbols() {
+                modified |= self.resolve_symbol(&symbol, &mut type_bound, errors);
+            }
+        }
+    }
 
-    fn update_wrapped(&mut self) {
-        let symbols: Vec<_> = self
-            .get_all_symbols()
-            .into_iter()
-            .map(|(_, type_bound)| type_bound)
-            .collect();
-        let returns = self.func_returns.values();
-        let params = self
-            .func_params
-            .values()
-            .map(|param| param.values())
+    /// Merge all function symbols.
+    fn merge_function_symbols(&mut self) {
+        let symbols = self
+            .scopes
+            .iter()
+            .map(|scope| scope.symbols.iter())
             .flatten();
-        let type_bounds = symbols.iter().chain(returns).chain(params);
-        for type_bound in type_bounds {
-            let TypeBound {
-                wrapped, bounded, ..
-            } = type_bound;
-            if wrapped.is_some() && bounded.is_some() {
-                let mut old_type = wrapped.as_ref().unwrap().borrow_mut();
-                if !old_type.specialized() {
-                    let bounded = match bounded.clone().unwrap() {
-                        Type::Char {
-                            num_flag: true,
-                            array_flag,
-                            array_len,
-                            pointer_flag,
-                            location,
-                        } => Type::Short {
-                            signed_flag: true,
-                            array_flag,
-                            array_len,
-                            pointer_flag,
-                            location,
-                        },
-                        type_ => type_,
-                    };
-                    let (array_flag, array_len) = old_type.get_array();
-                    let bounded = bounded.set_array(array_flag, array_len);
-                    old_type.set_specialized(bounded);
+        for (symbol, type_bound) in symbols {
+            match symbol {
+                Symbol::Parameter { function, name, .. } => {
+                    let old_type_bound = &self.func_params[function][name];
+                    let type_bound = TypeBound::merge(old_type_bound, type_bound);
+                    self.func_params
+                        .get_mut(function)
+                        .unwrap()
+                        .insert(name.to_string(), type_bound);
+                }
+                Symbol::Return { function, .. } => {
+                    let old_type_bound = &self.func_returns[function];
+                    let type_bound = TypeBound::merge(old_type_bound, type_bound);
+                    self.func_returns.insert(function.to_string(), type_bound);
+                }
+                _ => (),
+            }
+        }
+    }
+
+    /// All functions do not have `return` or return nothing will
+    /// have void return type.
+    fn implicit_return(&mut self) {
+        for type_bound in self.func_returns.values_mut() {
+            if type_bound.upper.is_empty()
+                && type_bound.lower.is_empty()
+                && type_bound.bounded.is_none()
+            {
+                type_bound.bounded = Some(Type::Void(None));
+            }
+        }
+    }
+
+    /// Try to resolve a symbol by checking whether all other symbols
+    /// that bound it have been fully bounded. Return true if this
+    /// symbol is successfully bounded.
+    fn resolve_symbol(
+        &mut self,
+        symbol: &Symbol,
+        type_bound: &mut TypeBound,
+        errors: &mut Vec<(String, Location)>,
+    ) -> bool {
+        match symbol {
+            Symbol::Variable { .. } | Symbol::Expression { .. } => {
+                self.resolve_type_bound(symbol, type_bound, errors)
+            }
+            Symbol::Parameter { .. } | Symbol::Return { .. } => {
+                let mut type_bound = self.get_type_bound(symbol).unwrap();
+                self.resolve_type_bound(symbol, &mut type_bound, errors)
+            }
+        }
+    }
+
+    /// Resolve a type bound.
+    fn resolve_type_bound(
+        &self,
+        symbol: &Symbol,
+        type_bound: &mut TypeBound,
+        errors: &mut Vec<(String, Location)>,
+    ) -> bool {
+        // Unify upper bounds.
+        let mut upper = Type::Any;
+        for bound in type_bound.upper.iter() {
+            match bound {
+                Bound::Type { refer, location } => {
+                    upper = match Type::compare_types(&upper, refer) {
+                        TypeRelationship::Sub => upper,
+                        TypeRelationship::Equal => refer.clone(),
+                        TypeRelationship::Super => refer.clone(),
+                        TypeRelationship::Invalid => {
+                            let message = format!(
+                                "Incompatible types `{}` and `{}` for `{}`.",
+                                upper, refer, symbol
+                            );
+                            errors.push((message, location.clone()));
+                            return false;
+                        }
+                    }
+                }
+                Bound::Symbol { refer, location } => {
+                    let type_bound = self.get_type_bound(refer).unwrap();
+                    if let Some(bounded) = &type_bound.bounded {
+                        upper = match Type::compare_types(&upper, bounded) {
+                            TypeRelationship::Sub => upper,
+                            TypeRelationship::Equal => bounded.clone(),
+                            TypeRelationship::Super => bounded.clone(),
+                            TypeRelationship::Invalid => {
+                                let message = format!(
+                                    "Incompatible types `{}` and `{}` for `{}`.",
+                                    upper, bounded, symbol
+                                );
+                                errors.push((message, location.clone()));
+                                return false;
+                            }
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // Unify lower bounds.
+        let mut lower = Type::Nothing;
+        for bound in type_bound.lower.iter() {
+            match bound {
+                Bound::Type { refer, location } => {
+                    lower = match Type::compare_types(&lower, refer) {
+                        TypeRelationship::Sub => refer.clone(),
+                        TypeRelationship::Equal => refer.clone(),
+                        TypeRelationship::Super => lower,
+                        TypeRelationship::Invalid => {
+                            let message = format!(
+                                "Incompatible types `{}` and `{}` for `{}`.",
+                                lower, refer, symbol
+                            );
+                            errors.push((message, location.clone()));
+                            return false;
+                        }
+                    }
+                }
+                Bound::Symbol { refer, location } => {
+                    let type_bound = self.get_type_bound(refer).unwrap();
+                    if let Some(bounded) = &type_bound.bounded {
+                        lower = match Type::compare_types(&lower, bounded) {
+                            TypeRelationship::Sub => bounded.clone(),
+                            TypeRelationship::Equal => bounded.clone(),
+                            TypeRelationship::Super => lower,
+                            TypeRelationship::Invalid => {
+                                let message = format!(
+                                    "Incompatible types `{}` and `{}` for `{}`.",
+                                    lower, bounded, symbol
+                                );
+                                errors.push((message, location.clone()));
+                                return false;
+                            }
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // Unify `infix`.
+        let mut infix = Type::Nothing;
+        if let Some((left_symbol, right_symbol)) = &type_bound.infix {
+            let left_type_bound = self.get_type_bound(left_symbol).unwrap();
+            let right_type_bound = self.get_type_bound(right_symbol).unwrap();
+            if let (Some(left), Some(right)) = &(left_type_bound.bounded, right_type_bound.bounded)
+            {
+                infix = match Type::compare_types(left, right) {
+                    TypeRelationship::Sub => right.clone(),
+                    TypeRelationship::Equal => right.clone(),
+                    TypeRelationship::Super => left.clone(),
+                    TypeRelationship::Invalid => {
+                        let message = format!(
+                            "Incompatible types `{}` and `{}` for `{}`.",
+                            left, right, symbol
+                        );
+                        errors.push((message, left.locate()));
+                        return false;
+                    }
+                }
+            } else {
+                return false;
+            }
+        }
+
+        // Unify `upper`, `lower`, and `infix`.
+        let mut type_ = match Type::compare_types(&infix, &lower) {
+            TypeRelationship::Sub => lower,
+            TypeRelationship::Equal => lower,
+            TypeRelationship::Super => infix,
+            TypeRelationship::Invalid => {
+                let message = format!(
+                    "Incompatible types `{}` and `{}` for `{}`.",
+                    infix, lower, symbol
+                );
+                errors.push((message, Location::default()));
+                return false;
+            }
+        };
+        type_ = match Type::compare_types(&upper, &type_) {
+            TypeRelationship::Sub => {
+                let message = format!(
+                    "`{}` should be more powerful than `{}` for `{}`.",
+                    upper, type_, symbol
+                );
+                errors.push((message, Location::default()));
+                return false;
+            }
+            TypeRelationship::Equal => type_,
+            TypeRelationship::Super => type_,
+            TypeRelationship::Invalid => {
+                let message = format!(
+                    "Incompatible types `{}` and `{}` for `{}`.",
+                    upper, type_, symbol
+                );
+                errors.push((message, Location::default()));
+                return false;
+            }
+        };
+
+        // Perform `member` transformation.
+        if let Some(member) = &type_bound.member {
+            if let Type::Struct { members, .. } = type_ {
+                type_ = match members.get(member) {
+                    Some(typ) => typ.clone(),
+                    None => {
+                        let message = format!(
+                            "`{}` is not a valid member for structure `{}`.",
+                            member, symbol
+                        );
+                        errors.push((message, Location::default()));
+                        return false;
+                    }
+                }
+            } else {
+                let message = format!("`{}` should be a structure.", symbol);
+                errors.push((message, Location::default()));
+                return false;
+            }
+        }
+
+        // Perform `ptr_mem` transformation.
+        if let Some(member) = &type_bound.ptr_mem {
+            if let Type::Pointer { refer, .. } = type_ {
+                if let Type::Struct { members, .. } = *refer {
+                    type_ = match members.get(member) {
+                        Some(typ) => typ.clone(),
+                        None => {
+                            let message = format!(
+                                "`{}` is not a valid member for structure `{}`.",
+                                member, symbol
+                            );
+                            errors.push((message, Location::default()));
+                            return false;
+                        }
+                    }
+                } else {
+                    let message = format!("`{}` should be a pointer to a structure.", symbol);
+                    errors.push((message, Location::default()));
+                    return false;
+                }
+            } else {
+                let message = format!("`{}` should be a pointer to a structure.", symbol);
+                errors.push((message, Location::default()));
+                return false;
+            }
+        }
+
+        // Perform `pointer` transformation.
+        if let Some(true) = &type_bound.pointer {
+            type_ = Type::Pointer {
+                refer: Box::new(type_),
+                location: None,
+            };
+        } else if let Some(false) = &type_bound.pointer {
+            type_ = if let Type::Pointer { refer, .. } = type_ {
+                *refer
+            } else {
+                let message = format!("`{}` should be a pointer.", symbol);
+                errors.push((message, Location::default()));
+                return false;
+            }
+        }
+
+        // Check for the bounded/wrapped type.
+        if type_bound.bounded.is_none() {
+            if let Some(typ) = &type_bound.wrapped {
+                if let Some(typ) = typ.borrow().specialized() {
+                    type_bound.bounded = Some(typ);
+                }
+            }
+        }
+
+        // Unify `type_` and `type_bound.bounded`.
+        if let Some(bounded) = &type_bound.bounded {
+            match Type::compare_types(&type_, bounded) {
+                TypeRelationship::Sub => (),
+                TypeRelationship::Equal => (),
+                TypeRelationship::Super => {
+                    let message = format!(
+                        "`{}` should be less powerful than `{}` for `{}`.",
+                        type_, bounded, symbol
+                    );
+                    errors.push((message, Location::default()));
+                }
+                TypeRelationship::Invalid => {
+                    let message = format!(
+                        "Incompatible types `{}` and `{}` for `{}`.",
+                        type_, bounded, symbol
+                    );
+                    errors.push((message, bounded.locate()));
+                }
+            }
+            false
+        } else {
+            type_bound.bounded = Some(type_);
+            true
+        }
+    }
+
+    /// Update bounded types back to AST.
+    fn update_wrapped(&self, errors: &mut Vec<(String, Location)>) {
+        // Update function return types.
+        for (func, return_type_bound) in self.func_returns.iter() {
+            if let Some(type_) = &return_type_bound.bounded {
+                return_type_bound
+                    .wrapped
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .specialize(type_);
+            } else {
+                let message = format!("Unresolved function return type `{}`.", func);
+                errors.push((message, Location::default()));
+            }
+        }
+
+        // Update function parameters.
+        for (func, params) in self.func_params.iter() {
+            for (param, type_bound) in params {
+                if let Some(type_) = &type_bound.bounded {
+                    type_bound
+                        .wrapped
+                        .as_ref()
+                        .unwrap()
+                        .borrow_mut()
+                        .specialize(type_);
+                } else {
+                    let message =
+                        format!("Unresolved function parameter `{}` in `{}`.", param, func);
+                    errors.push((message, Location::default()));
+                }
+            }
+        }
+
+        // Update local variables.
+        let symbols = self
+            .scopes
+            .iter()
+            .map(|scope| scope.symbols.iter())
+            .flatten();
+        for (symbol, type_bound) in symbols {
+            if let Symbol::Variable { .. } = symbol {
+                if let Some(type_) = &type_bound.bounded {
+                    type_bound
+                        .wrapped
+                        .as_ref()
+                        .unwrap()
+                        .borrow_mut()
+                        .specialize(type_);
+                } else {
+                    let message = format!("Unresolved symbol `{}`.", symbol);
+                    errors.push((message, Location::default()));
+                }
+            } else if let Symbol::Expression { .. } = symbol {
+                if type_bound.bounded.is_none() {
+                    let message = format!("Unresolved symbol `{}`.", symbol);
+                    errors.push((message, Location::default()));
                 }
             }
         }
     }
-
-    fn resolve_symbols(&mut self) {
-        let mut modified = true;
-        while modified {
-            modified = false;
-            self.symbol_table.update_global_symbols();
-            let mut symbols = self.symbol_table.get_all_symbols();
-            for (symbol, type_bound) in symbols.iter_mut() {
-                self.resolve_type_bound(symbol, type_bound, &mut modified, false);
-            }
-        }
-        modified = true;
-        while modified {
-            modified = false;
-            self.symbol_table.update_global_symbols();
-            let mut symbols = self.symbol_table.get_all_symbols();
-            for (symbol, type_bound) in symbols.iter_mut() {
-                self.resolve_type_bound(symbol, type_bound, &mut modified, true);
-            }
-        }
-    }
-
-    // fn implicit_return(&mut self) {
-    //     for (_, type_bound) in self.symbol_table.func_returns.iter_mut() {
-    //         if type_bound.upper.is_empty()
-    //             && type_bound.lower.is_empty()
-    //             && type_bound.bounded.is_none()
-    //         {
-    //             type_bound.bounded = Some(Type::Void {
-    //                 array_flag: false,
-    //                 array_len: None,
-    //                 pointer_flag: false,
-    //                 location: Location::default(),
-    //             });
-    //         }
-    //     }
-    // }
-
-    // fn resolve_type_bound(
-    //     &mut self,
-    //     symbol: &Symbol,
-    //     type_bound: &mut TypeBound,
-    //     modified: &mut bool,
-    //     aggressive: bool,
-    // ) {
-    //     let type_ = if let Some((left_symbol, right_symbol)) = &type_bound.infix {
-    //         if type_bound.bounded.is_some() {
-    //             return;
-    //         }
-    //         let mut _modified = false;
-    //         let mut left_type_bound = self.symbol_table.get_type_bound(left_symbol).unwrap();
-
-    //         self.resolve_type_bound(
-    //             left_symbol,
-    //             &mut left_type_bound,
-    //             &mut _modified,
-    //             aggressive,
-    //         );
-    //         let mut right_type_bound = self.symbol_table.get_type_bound(right_symbol).unwrap();
-    //         self.resolve_type_bound(
-    //             right_symbol,
-    //             &mut right_type_bound,
-    //             &mut _modified,
-    //             aggressive,
-    //         );
-    //         if let Some(left_type) = left_type_bound.bounded {
-    //             if let Some(right_type) = right_type_bound.bounded {
-    //                 match Type::compare_types(&left_type, &right_type) {
-    //                     TypeRelationship::Sub => right_type,
-    //                     TypeRelationship::Base => left_type,
-    //                     TypeRelationship::Equal => left_type,
-    //                     TypeRelationship::None => {
-    //                         let message = format!(
-    //                             "Incompatible types `{:?}` and `{:?}`.",
-    //                             left_type, right_type
-    //                         );
-    //                         self.push_error(&message, &left_type.locate());
-    //                         return;
-    //                     }
-    //                 }
-    //             } else {
-    //                 return;
-    //             }
-    //         } else {
-    //             return;
-    //         }
-    //     } else {
-    //         let mut upper_type = Type::Any;
-    //         for bound in type_bound.upper.iter() {
-    //             let type_ = match bound {
-    //                 Bound::Type(type_) => Some(type_).cloned(),
-    //                 Bound::Symbol(symbol) => {
-    //                     let type_ = self
-    //                         .symbol_table
-    //                         .get_type_bound(symbol)
-    //                         .unwrap()
-    //                         .bounded
-    //                         .clone();
-
-    //                     if type_bound.reference {
-    //                         type_.map(|t| t.set_pointer_flag(true))
-    //                     } else {
-    //                         type_
-    //                     }
-    //                 }
-    //                 Bound::Array(symbol) => self
-    //                     .symbol_table
-    //                     .get_type_bound(symbol)
-    //                     .unwrap()
-    //                     .bounded
-    //                     .map(|type_| type_.set_array(false, None))
-    //                     .clone(),
-    //             };
-
-    //             match type_ {
-    //                 None => {
-    //                     if !aggressive {
-    //                         return;
-    //                     }
-    //                 }
-    //                 Some(type_) => match Type::compare_types(&mut upper_type, &type_) {
-    //                     TypeRelationship::Sub => (),
-    //                     TypeRelationship::Base => {
-    //                         upper_type = type_;
-    //                     }
-    //                     TypeRelationship::Equal => (),
-    //                     TypeRelationship::None => {
-    //                         let message =
-    //                             format!("Incompatible types `{:?}` and `{:?}`.", upper_type, type_);
-    //                         self.push_error(&message, &type_.locate());
-    //                         return;
-    //                     }
-    //                 },
-    //             }
-    //         }
-
-    //         let mut lower_type = Type::Nothing;
-    //         for bound in type_bound.lower.iter() {
-    //             let type_ = match bound {
-    //                 Bound::Type(type_) => Some(type_).cloned(),
-    //                 Bound::Symbol(symbol) => {
-    //                     let type_ = self
-    //                         .symbol_table
-    //                         .get_type_bound(symbol)
-    //                         .unwrap()
-    //                         .bounded
-    //                         .clone();
-
-    //                     if type_bound.reference {
-    //                         type_.map(|t| t.set_pointer_flag(true))
-    //                     } else {
-    //                         type_
-    //                     }
-    //                 }
-    //                 Bound::Array(symbol) => self
-    //                     .symbol_table
-    //                     .get_type_bound(symbol)
-    //                     .unwrap()
-    //                     .bounded
-    //                     .map(|type_| type_.set_array(false, None))
-    //                     .clone(),
-    //             };
-    //             match type_ {
-    //                 None => {
-    //                     if !aggressive {
-    //                         return;
-    //                     }
-    //                 }
-    //                 Some(type_) => match Type::compare_types(&mut lower_type, &type_) {
-    //                     TypeRelationship::Sub => {
-    //                         lower_type = type_;
-    //                     }
-    //                     TypeRelationship::Base => (),
-    //                     TypeRelationship::Equal => (),
-    //                     TypeRelationship::None => {
-    //                         let message =
-    //                             format!("Incompatible types `{:?}` and `{:?}`.", lower_type, type_);
-    //                         self.push_error(&message, &type_.locate());
-    //                         return;
-    //                     }
-    //                 },
-    //             }
-    //         }
-
-    //         let (lower_type, upper_type) =
-    //             match Type::instantiate_any_nothing(lower_type.clone(), upper_type.clone()) {
-    //                 Ok((lower_type, upper_type)) => (lower_type, upper_type),
-    //                 Err(_) => {
-    //                     return;
-    //                 }
-    //             };
-
-    //         if let Some(old_type) = &type_bound.bounded {
-    //             match Type::compare_types(old_type, &upper_type) {
-    //                 TypeRelationship::Sub | TypeRelationship::Equal => {
-    //                     match Type::compare_types(old_type, &lower_type) {
-    //                         TypeRelationship::Base | TypeRelationship::Equal => {
-    //                             return;
-    //                         }
-    //                         _ => {
-    //                             let message = format!(
-    //                                 "Incompatible types `{:?}` and `{:?}`.",
-    //                                 old_type, lower_type
-    //                             );
-    //                             self.push_error(&message, &old_type.locate());
-    //                             return;
-    //                         }
-    //                     }
-    //                 }
-    //                 _ => {
-    //                     let message = format!(
-    //                         "Incompatible types `{:?}` and `{:?}`.",
-    //                         old_type, upper_type
-    //                     );
-    //                     self.push_error(&message, &old_type.locate());
-    //                     return;
-    //                 }
-    //             }
-    //         }
-    //         match Type::compare_types(&lower_type, &upper_type) {
-    //             TypeRelationship::Sub | TypeRelationship::Equal => lower_type,
-    //             _ => {
-    //                 let message = format!(
-    //                     "Incompatible types `{:?}` and `{:?}`.",
-    //                     lower_type, upper_type
-    //                 );
-    //                 self.push_error(&message, &lower_type.locate());
-    //                 return;
-    //             }
-    //         }
-    //     };
-    //     // if type_bound.reference {
-    //     //     type_bound.bounded.as_mut().map(|type_| type_.set_pointer_flag(true));
-    //     // }
-    //     // else
-    //     if let Some(mem) = &type_bound.ptr_member {
-    //         if let Type::Struct { members, .. } = &type_ {
-    //             if let Type::Struct {
-    //                 pointer_flag: true, ..
-    //             } = &type_
-    //             {
-    //                 match members.get(mem) {
-    //                     Some(type_) => {
-    //                         type_bound.upper.clear();
-    //                         type_bound.lower.clear();
-    //                         type_bound.infix = None;
-    //                         type_bound.member = None;
-    //                         type_bound.bounded = Some(type_.clone());
-    //                     }
-    //                     None => {
-    //                         let message = format!("Not a member.");
-    //                         self.push_error(&message, &type_.locate());
-    //                         return;
-    //                     }
-    //                 }
-    //             } else {
-    //                 let message = format!("Not a pointer to astructure.");
-    //                 self.push_error(&message, &type_.locate());
-    //                 return;
-    //             }
-    //         } else {
-    //             let message = format!("Not a structure.");
-    //             self.push_error(&message, &type_.locate());
-    //             return;
-    //         }
-    //     } else if let Some(mem) = &type_bound.member {
-    //         if let Type::Struct { members, .. } = &type_ {
-    //             match members.get(mem) {
-    //                 Some(type_) => {
-    //                     type_bound.upper.clear();
-    //                     type_bound.lower.clear();
-    //                     type_bound.infix = None;
-    //                     type_bound.member = None;
-    //                     type_bound.bounded = Some(type_.clone());
-    //                 }
-    //                 None => {
-    //                     let message = format!("Not a member.");
-    //                     self.push_error(&message, &type_.locate());
-    //                     return;
-    //                 }
-    //             }
-    //         } else {
-    //             let message = format!("Not a structure.");
-    //             self.push_error(&message, &type_.locate());
-    //             return;
-    //         }
-    //     } else {
-    //         type_bound.bounded = Some(type_.clone());
-    //     }
-
-    //     self.symbol_table
-    //         .update_type_bound(symbol.clone(), type_bound.clone());
-    //     *modified = true;
-    // }
 }
 
 /// A resolver that analyses a generic AST which may contain unknown
@@ -736,8 +717,12 @@ impl<'a> Resolver<'a> {
 
         // Resolve types based on constraints and update type
         // information containted in AST.
-        self.symbol_table.resolve_symbols();
-        self.symbol_table.update_wrapped();
+        let mut errors = Vec::new();
+        self.symbol_table.resolve_symbols(&mut errors);
+        self.symbol_table.update_wrapped(&mut errors);
+        for (msg, loc) in errors {
+            self.push_error(&msg, &loc);
+        }
 
         if self.errors.is_empty() {
             Ok(ast)
@@ -776,7 +761,7 @@ impl<'a> Resolver<'a> {
                 name: param.clone(),
             };
             let type_bound = TypeBound::wrapped(type_);
-            self.symbol_table.define_symbol(symbol, type_bound);
+            self.symbol_table.define_symbol(&symbol, &type_bound);
         }
 
         // Define the function return.
@@ -785,7 +770,7 @@ impl<'a> Resolver<'a> {
             function: name.clone(),
         };
         let type_bound = TypeBound::wrapped(return_type);
-        self.symbol_table.define_symbol(symbol, type_bound);
+        self.symbol_table.define_symbol(&symbol, &type_bound);
 
         // Analyse the function body.
         self.analyse_statement(body);
@@ -804,7 +789,10 @@ impl<'a> Resolver<'a> {
             Statement::Expr(expr) => match self.analyse_expression(expr) {
                 _ => (),
             },
-            Statement::Return { expression, location } => self.analyse_statement_return(expression, location),
+            Statement::Return {
+                expression,
+                location,
+            } => self.analyse_statement_return(expression, location),
             Statement::Block { statements, .. } => {
                 for statement in statements {
                     self.analyse_statement(statement);
@@ -874,18 +862,14 @@ impl<'a> Resolver<'a> {
         match expression {
             Some(expr) => {
                 if let Ok((expr_symbol, mut expr_type_bound)) = self.analyse_expression(expr) {
-                    return_type_bound
-                        .lower
-                        .push(Bound::Symbol{
-                            refer: expr_symbol.clone(),
-                            location: expr.locate(),
-                        });
-                    expr_type_bound
-                        .upper
-                        .push(Bound::Symbol{
-                            refer: return_symbol.clone(),
-                            location: expr.locate(),
-                        });
+                    return_type_bound.lower.push(Bound::Symbol {
+                        refer: expr_symbol.clone(),
+                        location: expr.locate(),
+                    });
+                    expr_type_bound.upper.push(Bound::Symbol {
+                        refer: return_symbol.clone(),
+                        location: expr.locate(),
+                    });
                     self.symbol_table
                         .update_type_bound(return_symbol, return_type_bound);
                     self.symbol_table
@@ -894,11 +878,11 @@ impl<'a> Resolver<'a> {
             }
             None => {
                 let type_void = Type::Void(None);
-                return_type_bound.upper.push(Bound::Type{
+                return_type_bound.upper.push(Bound::Type {
                     refer: type_void.clone(),
                     location: location.clone(),
                 });
-                return_type_bound.lower.push(Bound::Type{
+                return_type_bound.lower.push(Bound::Type {
                     refer: type_void.clone(),
                     location: location.clone(),
                 });
@@ -911,32 +895,46 @@ impl<'a> Resolver<'a> {
         base_type: &Rc<RefCell<Type>>,
         declarators: &Vec<(Rc<RefCell<Type>>, String, Option<Expression>)>,
     ) {
-        if let Type::Struct {name, members,location} = base_type.borrow().clone() {
+        if let Type::Struct {
+            name,
+            members,
+            location,
+        } = base_type.borrow().clone()
+        {
             // Define the structure.
-            self.symbol_table.define_structure(&Type::Struct {name, members: members.clone(),location});
+            self.symbol_table.define_structure(&Type::Struct {
+                name,
+                members: members.clone(),
+                location,
+            });
 
             for (type_, name, init) in declarators {
                 // Define the variable.
                 let symbol = Symbol::Variable {
                     scope: self.symbol_table.current_scope,
                     name: name.clone(),
+                    location: type_.borrow().locate(),
                 };
                 let mut type_bound = TypeBound::wrapped(&type_);
-                type_bound.upper.push(Bound::Type{
+                type_bound.upper.push(Bound::Type {
                     refer: type_.borrow().clone(),
                     location: type_.borrow().locate(),
                 });
-                type_bound.lower.push(Bound::Type{
+                type_bound.lower.push(Bound::Type {
                     refer: type_.borrow().clone(),
                     location: type_.borrow().locate(),
                 });
 
                 // Check the initializer.
                 match init {
-                    Some(Expression::InitList{initializers, location}) => {
+                    Some(Expression::InitList {
+                        initializers,
+                        location,
+                    }) => {
                         let initializers: Vec<_> = initializers
-                        .iter()
-                        .map(|(name, expr)| (name, self.analyse_expression(expr))).collect();
+                            .iter()
+                            .map(|(name, expr)| (name, self.analyse_expression(expr)))
+                            .collect();
                         for (field, expr) in initializers {
                             // Every field must be explicitly named.
                             if field.is_none() {
@@ -952,12 +950,10 @@ impl<'a> Resolver<'a> {
                             }
                             let (expr_symbol, mut expr_type_bound) = expr.unwrap();
                             match members.get(field) {
-                                Some(type_) => {
-                                    expr_type_bound.upper.push(Bound::Type{
-                                        refer: type_.clone(),
-                                        location: location.clone()
-                                    })
-                                }
+                                Some(type_) => expr_type_bound.upper.push(Bound::Type {
+                                    refer: type_.clone(),
+                                    location: location.clone(),
+                                }),
                                 None => {
                                     let message = format!("Unknown field `{}` in InitList.", field);
                                     self.push_error(&message, location);
@@ -970,7 +966,7 @@ impl<'a> Resolver<'a> {
                                 .update_type_bound(expr_symbol, expr_type_bound);
                         }
                     }
-                    Some(expr) => {
+                    Some(_) => {
                         let message = "Expect an init list.";
                         self.push_error(&message, &type_.borrow().locate());
                         return;
@@ -988,24 +984,29 @@ impl<'a> Resolver<'a> {
                 let symbol = Symbol::Variable {
                     scope: self.symbol_table.current_scope,
                     name: name.clone(),
+                    location: type_.borrow().locate(),
                 };
                 let mut type_bound = TypeBound::wrapped(type_);
-                type_bound.upper.push(Bound::Type{
+                type_bound.upper.push(Bound::Type {
                     refer: type_.borrow().clone(),
                     location: type_.borrow().locate(),
                 });
-                type_bound.lower.push(Bound::Type{
+                type_bound.lower.push(Bound::Type {
                     refer: type_.borrow().clone(),
                     location: type_.borrow().locate(),
                 });
 
                 // Check the initializer.
                 match init {
-                    Some(Expression::InitList{initializers, location}) => {
+                    Some(Expression::InitList {
+                        initializers,
+                        location,
+                    }) => {
                         // Find an array initializer.
                         let initializers: Vec<_> = initializers
-                        .iter()
-                        .map(|(name, expr)| (name, self.analyse_expression(expr))).collect();
+                            .iter()
+                            .map(|(name, expr)| (name, self.analyse_expression(expr)))
+                            .collect();
                         for (field, expr) in initializers {
                             // An array initializer should not have named fields.
                             if field.is_some() {
@@ -1019,13 +1020,13 @@ impl<'a> Resolver<'a> {
                                 return;
                             }
                             let (expr_symbol, mut expr_type_bound) = expr.unwrap();
-                            type_bound.lower.push(Bound::Symbol{
+                            type_bound.lower.push(Bound::Symbol {
                                 refer: expr_symbol.clone(),
-                                location: location.clone()
+                                location: location.clone(),
                             });
-                            expr_type_bound.upper.push(Bound::Symbol{
+                            expr_type_bound.upper.push(Bound::Symbol {
                                 refer: symbol.clone(),
-                                location: location.clone()
+                                location: location.clone(),
                             });
 
                             // Update the type bound.
@@ -1043,18 +1044,18 @@ impl<'a> Resolver<'a> {
                             return;
                         }
                         let (expr_symbol, mut expr_type_bound) = expr.unwrap();
-                        type_bound.lower.push(Bound::Symbol{
+                        type_bound.lower.push(Bound::Symbol {
                             refer: expr_symbol.clone(),
-                            location: location.clone()
+                            location: location.clone(),
                         });
-                        expr_type_bound.upper.push(Bound::Symbol{
+                        expr_type_bound.upper.push(Bound::Symbol {
                             refer: symbol.clone(),
-                            location: location.clone()
+                            location: location.clone(),
                         });
 
                         // Update the type bound.
                         self.symbol_table
-                        .update_type_bound(expr_symbol, expr_type_bound);
+                            .update_type_bound(expr_symbol, expr_type_bound);
                     }
                     None => (),
                 }
@@ -1123,8 +1124,8 @@ impl<'a> Resolver<'a> {
             Expression::FloatConst { value, location } => {
                 self.analyse_expression_floatconst(value, location)
             }
-            Expression::CharConst { .. } => self.analyse_expression_charconst(),
-            Expression::StrConst { .. } => self.analyse_expression_strconst(),
+            Expression::CharConst { location, .. } => self.analyse_expression_charconst(location),
+            Expression::StrConst { location, .. } => self.analyse_expression_strconst(location),
             Expression::Prefix {
                 operator,
                 expression,
@@ -1170,6 +1171,7 @@ impl<'a> Resolver<'a> {
             Symbol::Variable {
                 scope: self.symbol_table.current_scope,
                 name: value.to_string(),
+                location: location.clone(),
             }
         };
         self.symbol_table
@@ -1206,10 +1208,9 @@ impl<'a> Resolver<'a> {
             self.push_error(&message, location);
             return Err(());
         };
-        let symbol = self.symbol_table.make_expression_symbol();
+        let symbol = self.symbol_table.make_expression_symbol(location);
         let type_bound = TypeBound::bounded(&type_);
-        self.symbol_table
-            .define_symbol(symbol.clone(), type_bound.clone());
+        self.symbol_table.define_symbol(&symbol, &type_bound);
         Ok((symbol, type_bound))
     }
 
@@ -1228,31 +1229,34 @@ impl<'a> Resolver<'a> {
             self.push_error(&message, location);
             return Err(());
         };
-        let symbol = self.symbol_table.make_expression_symbol();
+        let symbol = self.symbol_table.make_expression_symbol(location);
         let type_bound = TypeBound::bounded(&type_);
-        self.symbol_table
-            .define_symbol(symbol.clone(), type_bound.clone());
+        self.symbol_table.define_symbol(&symbol, &type_bound);
         Ok((symbol, type_bound))
     }
 
-    fn analyse_expression_charconst(&mut self) -> Result<(Symbol, TypeBound), ()> {
+    fn analyse_expression_charconst(
+        &mut self,
+        location: &Location,
+    ) -> Result<(Symbol, TypeBound), ()> {
         let type_ = Type::Char(None);
-        let symbol = self.symbol_table.make_expression_symbol();
+        let symbol = self.symbol_table.make_expression_symbol(location);
         let type_bound = TypeBound::bounded(&type_);
-        self.symbol_table
-            .define_symbol(symbol.clone(), type_bound.clone());
+        self.symbol_table.define_symbol(&symbol, &type_bound);
         Ok((symbol, type_bound))
     }
 
-    fn analyse_expression_strconst(&mut self) -> Result<(Symbol, TypeBound), ()> {
+    fn analyse_expression_strconst(
+        &mut self,
+        location: &Location,
+    ) -> Result<(Symbol, TypeBound), ()> {
         let type_ = Type::Pointer {
             refer: Box::new(Type::Char(None)),
             location: None,
         };
-        let symbol = self.symbol_table.make_expression_symbol();
+        let symbol = self.symbol_table.make_expression_symbol(location);
         let type_bound = TypeBound::bounded(&type_);
-        self.symbol_table
-            .define_symbol(symbol.clone(), type_bound.clone());
+        self.symbol_table.define_symbol(&symbol, &type_bound);
         Ok((symbol, type_bound))
     }
 
@@ -1270,21 +1274,20 @@ impl<'a> Resolver<'a> {
             }
             "+" | "-" => {
                 // Allow numerical types.
-                expr_type_bound.upper.push(Bound::Type{
+                expr_type_bound.upper.push(Bound::Type {
                     refer: Type::Double(None),
-                    location: location.clone()
+                    location: location.clone(),
                 });
-                expr_type_bound.lower.push(Bound::Type{
+                expr_type_bound.lower.push(Bound::Type {
                     refer: Type::Byte,
-                    location: location.clone()
+                    location: location.clone(),
                 });
-                let symbol = self.symbol_table.make_expression_symbol();
-                let type_bound = TypeBound::squeezed(&Bound::Symbol{
+                let symbol = self.symbol_table.make_expression_symbol(location);
+                let type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
                     location: location.clone(),
                 });
-                self.symbol_table
-                    .define_symbol(symbol.clone(), type_bound.clone());
+                self.symbol_table.define_symbol(&symbol, &type_bound);
                 self.symbol_table
                     .update_type_bound(expr_symbol, expr_type_bound);
                 Ok((symbol, type_bound))
@@ -1292,27 +1295,25 @@ impl<'a> Resolver<'a> {
             "&" => {
                 // Allow any types.
                 // Set `TypeBound::pointer`.
-                let symbol = self.symbol_table.make_expression_symbol();
-                let mut type_bound = TypeBound::squeezed(&Bound::Symbol{
+                let symbol = self.symbol_table.make_expression_symbol(location);
+                let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
                     location: location.clone(),
                 });
                 type_bound.pointer = Some(true);
-                self.symbol_table
-                    .define_symbol(symbol.clone(), type_bound.clone());
+                self.symbol_table.define_symbol(&symbol, &type_bound);
                 Ok((symbol, type_bound))
             }
             "*" => {
                 // Allow pointer types.
                 // Set `TypeBound::pointer`.
-                let symbol = self.symbol_table.make_expression_symbol();
-                let mut type_bound = TypeBound::squeezed(&Bound::Symbol{
+                let symbol = self.symbol_table.make_expression_symbol(location);
+                let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
                     location: location.clone(),
                 });
                 type_bound.pointer = Some(false);
-                self.symbol_table
-                    .define_symbol(symbol.clone(), type_bound.clone());
+                self.symbol_table.define_symbol(&symbol, &type_bound);
                 Ok((symbol, type_bound))
             }
             _ => unreachable!(),
@@ -1326,11 +1327,11 @@ impl<'a> Resolver<'a> {
         right: &Expression,
     ) -> Result<(Symbol, TypeBound), ()> {
         let (left_symbol, left_type_bound) = self.analyse_expression(left)?;
-        let (right_symbol, right_type_bound) = self.analyse_expression(right)?;
+        let (right_symbol, _) = self.analyse_expression(right)?;
 
-        let symbol = self.symbol_table.make_expression_symbol();
+        let symbol = self.symbol_table.make_expression_symbol(&left.locate());
         let type_bound = match operator {
-            "+" | "-" | "*" | "/" | "%"  => {
+            "+" | "-" | "*" | "/" | "%" => {
                 // Allow any types.
                 // Set `TypeBound::infix`.
                 TypeBound::infixed(&left_symbol, &right_symbol)
@@ -1340,7 +1341,7 @@ impl<'a> Resolver<'a> {
                 // return the left type bound.
                 left_type_bound
             }
-            "<" | ">" | "<=" | ">=" | "=="| "!="| "&&"| "||" => {
+            "<" | ">" | "<=" | ">=" | "==" | "!=" | "&&" | "||" => {
                 // Allow any types.
                 // return int.
                 let type_ = Type::Int(None);
@@ -1357,7 +1358,7 @@ impl<'a> Resolver<'a> {
                     self.push_error(&message, &left.locate());
                     return Err(());
                 };
-                let type_bound = TypeBound::squeezed(&Bound::Symbol{
+                let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: left_symbol.clone(),
                     location: left.locate(),
                 });
@@ -1374,7 +1375,7 @@ impl<'a> Resolver<'a> {
                     self.push_error(&message, &left.locate());
                     return Err(());
                 };
-                let type_bound = TypeBound::squeezed(&Bound::Symbol{
+                let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: left_symbol.clone(),
                     location: left.locate(),
                 });
@@ -1384,8 +1385,7 @@ impl<'a> Resolver<'a> {
             _ => unreachable!(),
         };
 
-        self.symbol_table
-            .define_symbol(symbol.clone(), type_bound.clone());
+        self.symbol_table.define_symbol(&symbol, &type_bound);
         Ok((symbol, type_bound))
     }
 
@@ -1398,13 +1398,14 @@ impl<'a> Resolver<'a> {
         match operator {
             "++" | "--" => {
                 // Allow any types.
-                let symbol = self.symbol_table.make_expression_symbol();
-                let type_bound = TypeBound::squeezed(&Bound::Symbol{
+                let symbol = self
+                    .symbol_table
+                    .make_expression_symbol(&expression.locate());
+                let type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
                     location: expression.locate(),
                 });
-                self.symbol_table
-                    .define_symbol(symbol.clone(), type_bound.clone());
+                self.symbol_table.define_symbol(&symbol, &type_bound);
                 Ok((symbol, type_bound))
             }
             _ => unreachable!(),
@@ -1416,15 +1417,15 @@ impl<'a> Resolver<'a> {
         expression: &Expression,
         index: &Expression,
     ) -> Result<(Symbol, TypeBound), ()> {
-        let (expr_symbol, expr_type_bound) = self.analyse_expression(expression)?;
-        let (index_symbol, index_type_bound) = self.analyse_expression(index)?;
+        let (expr_symbol, mut expr_type_bound) = self.analyse_expression(expression)?;
+        let (index_symbol, mut index_type_bound) = self.analyse_expression(index)?;
 
         // index must be integral types.
-        index_type_bound.upper.push(Bound::Type{
+        index_type_bound.upper.push(Bound::Type {
             refer: Type::Long(None),
             location: index.locate(),
         });
-        index_type_bound.lower.push(Bound::Type{
+        index_type_bound.lower.push(Bound::Type {
             refer: Type::Byte,
             location: index.locate(),
         });
@@ -1432,14 +1433,23 @@ impl<'a> Resolver<'a> {
             .update_type_bound(index_symbol.clone(), index_type_bound.clone());
 
         // Require the expression to be a pointer.
-        let symbol = self.symbol_table.make_expression_symbol();
-        let type_bound = TypeBound::squeezed(&Bound::Symbol{
+        expr_type_bound.upper.push(Bound::Type {
+            refer: Type::AnyRef,
+            location: expression.locate(),
+        });
+        expr_type_bound.lower.push(Bound::Type {
+            refer: Type::Null,
+            location: expression.locate(),
+        });
+        let symbol = self
+            .symbol_table
+            .make_expression_symbol(&expression.locate());
+        let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
             refer: expr_symbol.clone(),
             location: expression.locate(),
         });
         type_bound.pointer = Some(true);
-        self.symbol_table
-            .define_symbol(symbol.clone(), type_bound.clone());
+        self.symbol_table.define_symbol(&symbol, &type_bound);
         Ok((symbol, type_bound))
     }
 
@@ -1463,8 +1473,8 @@ impl<'a> Resolver<'a> {
                 }
             };
             self.symbol_table
-                .define_symbol(return_symbol.clone(), return_type_bound.clone());
-            
+                .define_symbol(&return_symbol, &return_type_bound);
+
             // Constrain arguments and parameters.
             let params = match self.symbol_table.func_params.get(value) {
                 Some(params) => params.clone(),
@@ -1479,40 +1489,38 @@ impl<'a> Resolver<'a> {
                 self.push_error(&message, &expression.locate());
                 return Err(());
             }
-            for (arg, (param, param_type_bound)) in arguments.iter().zip(params.into_iter()) {
-                let (arg_symbol, arg_type_bound) = self.analyse_expression(arg)?;
+            for (arg, (param, mut param_type_bound)) in arguments.iter().zip(params.into_iter()) {
+                let (arg_symbol, mut arg_type_bound) = self.analyse_expression(arg)?;
                 let param_symbol = Symbol::Parameter {
                     scope: self.symbol_table.current_scope,
                     function: value.to_string(),
                     name: param.to_string(),
                 };
-                arg_type_bound
-                    .upper
-                    .push(Bound::Symbol{
-                        refer: param_symbol.clone(),
-                        location: arg.locate(),
-                    });
-                param_type_bound
-                    .lower
-                    .push(Bound::Symbol{
-                        refer: arg_symbol.clone(),
-                        location: arg.locate(),
-                    });
-                self.symbol_table.define_symbol(arg_symbol, arg_type_bound);
+                arg_type_bound.upper.push(Bound::Symbol {
+                    refer: param_symbol.clone(),
+                    location: arg.locate(),
+                });
+                param_type_bound.lower.push(Bound::Symbol {
+                    refer: arg_symbol.clone(),
+                    location: arg.locate(),
+                });
                 self.symbol_table
-                    .define_symbol(param_symbol, param_type_bound);
+                    .define_symbol(&arg_symbol, &arg_type_bound);
+                self.symbol_table
+                    .define_symbol(&param_symbol, &param_type_bound);
             }
 
             // Set up the function call symbol.
-            let symbol = self.symbol_table.make_expression_symbol();
-            let type_bound = TypeBound::new();
-            type_bound.lower
-                    .push(Bound::Symbol{
-                        refer: return_symbol.clone(),
-                        location: expression.locate(),
-                    });
+            let symbol = self
+                .symbol_table
+                .make_expression_symbol(&expression.locate());
+            let mut type_bound = TypeBound::new();
+            type_bound.lower.push(Bound::Symbol {
+                refer: return_symbol.clone(),
+                location: expression.locate(),
+            });
             self.symbol_table
-                .define_symbol(symbol.clone(), type_bound.clone());
+                .define_symbol(&symbol.clone(), &type_bound.clone());
             Ok((symbol, type_bound))
         } else {
             // Require the function name directly available.

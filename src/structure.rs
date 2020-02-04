@@ -296,16 +296,15 @@ impl fmt::Display for Type {
 }
 
 impl Type {
-    /// Specialize a `T` type to a concrete type. Panic if it is not a
-    /// `T` type or it has been specialized.
-    pub fn specialize(&mut self, type_: Type) {
+    /// Specialize a `T` type to a concrete type. Return false
+    /// if it is not a `T` type or it has been specialized.
+    pub fn specialize(&mut self, type_: &Type) -> bool {
         match self {
             Type::T(specialized) => {
-                specialized.replace(Box::new(type_));
+                specialized.replace(Box::new(type_.clone()));
+                true
             }
-            _ => {
-                panic!("Try to specialize a concrete type.");
-            }
+            _ => false,
         }
     }
 
