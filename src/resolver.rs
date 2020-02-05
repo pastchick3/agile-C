@@ -10,7 +10,7 @@ use crate::structure::{
 };
 
 /// Every symbol will be mapped to a type bound.
-#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 enum Symbol {
     Variable {
         scope: usize,
@@ -42,6 +42,15 @@ impl Symbol {
             Symbol::Return { scope, .. } => scope.clone(),
         }
     }
+
+    fn set_scope(&mut self, s: usize) {
+        match self {
+            Symbol::Variable { scope, .. } => *scope = s,
+            Symbol::Expression { scope, .. } => *scope = s,
+            Symbol::Parameter { scope, .. } => *scope = s,
+            Symbol::Return { scope, .. } => *scope = s,
+        }
+    }
 }
 
 impl fmt::Display for Symbol {
@@ -49,8 +58,10 @@ impl fmt::Display for Symbol {
         match self {
             Symbol::Variable { name, location, .. } => write!(f, "{} at {}", name, location),
             Symbol::Expression { location, .. } => write!(f, "Expr at {}", location),
-            Symbol::Parameter { .. } => unreachable!(),
-            Symbol::Return { .. } => unreachable!(),
+            Symbol::Parameter { function, name, .. } => {
+                write!(f, "Param `{}` of `{}`", name, function)
+            }
+            Symbol::Return { function, .. } => write!(f, "Return of `{}`", function),
         }
     }
 }
@@ -58,8 +69,16 @@ impl fmt::Display for Symbol {
 /// A symbol can be bounded by either a concrete type or another symbol.
 #[derive(Clone, Debug)]
 enum Bound {
-    Type { refer: Type, location: Location },
-    Symbol { refer: Symbol, location: Location },
+    Type {
+        refer: Type,
+        pointer: Option<bool>, // pointers, true for `&`, false for `*`
+        location: Location,
+    },
+    Symbol {
+        refer: Symbol,
+        pointer: Option<bool>, // pointers, true for `&`, false for `*`
+        location: Location,
+    },
 }
 
 /// Every symbol will be mapped to a type bound.
@@ -70,7 +89,6 @@ struct TypeBound {
     infix: Option<(Symbol, Symbol)>,    // infix expressions (`Option<(left, right)>`)
     member: Option<String>,             // structure members using dot operators (`Option<member>`)
     ptr_mem: Option<String>, // structure members using arrow operators (`Option<member>`)
-    pointer: Option<bool>,   // pointers, true for `&`, false for `*`
     bounded: Option<Type>,   // concrete types that are determined
     wrapped: Option<Rc<RefCell<Type>>>, // types in AST that are wrapped
 }
@@ -83,7 +101,6 @@ impl TypeBound {
             infix: None,
             member: None,
             ptr_mem: None,
-            pointer: None,
             bounded: None,
             wrapped: None,
         }
@@ -96,7 +113,6 @@ impl TypeBound {
             infix: None,
             member: None,
             ptr_mem: None,
-            pointer: None,
             bounded: None,
             wrapped: Some(Rc::clone(wrapped)),
         }
@@ -109,7 +125,6 @@ impl TypeBound {
             infix: None,
             member: None,
             ptr_mem: None,
-            pointer: None,
             bounded: Some(bounded.clone()),
             wrapped: None,
         }
@@ -122,7 +137,6 @@ impl TypeBound {
             infix: None,
             member: None,
             ptr_mem: None,
-            pointer: None,
             bounded: None,
             wrapped: None,
         }
@@ -135,7 +149,6 @@ impl TypeBound {
             infix: Some((left.clone(), right.clone())),
             member: None,
             ptr_mem: None,
-            pointer: None,
             bounded: None,
             wrapped: None,
         }
@@ -156,7 +169,6 @@ impl TypeBound {
             infix: None,
             member: None,
             ptr_mem: None,
-            pointer: None,
             bounded: None,
             wrapped: left.wrapped.clone(),
         }
@@ -274,23 +286,79 @@ impl SymbolTable {
         scope.symbols.insert(symbol.clone(), type_bound.clone());
     }
 
-    /// Get the corresponding type bound of the given symbol.
-    fn get_type_bound(&self, symbol: &Symbol) -> Option<TypeBound> {
-        let scope = &self.scopes[symbol.get_scope()];
-        scope.symbols.get(symbol).cloned()
+    /// Get the corresponding type bound of the given symbol in scopes.
+    fn get_local_type_bound(&self, symbol: &mut Symbol) -> Option<TypeBound> {
+        let mut scope = &self.scopes[symbol.get_scope()];
+        loop {
+            if let Some(type_bound) = scope.symbols.get(symbol) {
+                return Some(type_bound.clone());
+            } else if let Some(outer) = scope.outer {
+                scope = &self.scopes[outer];
+                symbol.set_scope(symbol.get_scope() - 1);
+            } else {
+                return None;
+            }
+        }
     }
 
-    /// Update the corresponding type bound of the given symbol.
-    fn update_type_bound(&mut self, symbol: Symbol, type_bound: TypeBound) {
+    /// Get the corresponding type bound of the given symbol in scopes and
+    /// the global symbol table (function symbols).
+    fn get_global_type_bound(&self, symbol: &mut Symbol) -> Option<TypeBound> {
+        match &symbol {
+            Symbol::Variable { .. } | Symbol::Expression { .. } => {
+                self.get_local_type_bound(symbol)
+            }
+            Symbol::Parameter { function, name, .. } => {
+                let params = self.func_params.get(function).unwrap();
+                params.get(name).cloned()
+            }
+            Symbol::Return { function, .. } => self.func_returns.get(function).cloned(),
+        }
+    }
+
+    /// Update the corresponding type bound of the given symbol in local scopes.
+    fn update_local_type_bound(&mut self, symbol: Symbol, type_bound: TypeBound) {
         let scope = &mut self.scopes[symbol.get_scope()];
         scope.symbols.insert(symbol, type_bound);
     }
 
-    /// Get all symbols and type bounds in all scopes.
-    fn get_all_symbols(&self) -> Vec<(Symbol, TypeBound)> {
+    /// Update the corresponding type bound of the given symbol in top scopes.
+    fn update_global_type_bound(&mut self, symbol: Symbol, type_bound: TypeBound) {
+        match &symbol {
+            Symbol::Variable { .. } | Symbol::Expression { .. } => {
+                let scope = &mut self.scopes[symbol.get_scope()];
+                scope.symbols.insert(symbol, type_bound);
+            }
+            Symbol::Parameter { function, name, .. } => {
+                let params = self.func_params.get_mut(function).unwrap();
+                params.insert(name.clone(), type_bound);
+            }
+            Symbol::Return { function, .. } => {
+                self.func_returns.insert(function.clone(), type_bound);
+            }
+        }
+    }
+
+    /// Get variable and expressions symbols and type bounds in all scopes,
+    /// with function symbols from the global symbol table.
+    fn get_global_symbols(&self) -> Vec<(Symbol, TypeBound)> {
         self.scopes
             .iter()
-            .map(|scope| scope.symbols.clone().into_iter())
+            .map(|scope| {
+                scope
+                    .symbols
+                    .clone()
+                    .into_iter()
+                    .map(|(symbol, type_bound)| match &symbol {
+                        Symbol::Variable { .. } | Symbol::Expression { .. } => (symbol, type_bound),
+                        Symbol::Parameter { function, name, .. } => {
+                            (symbol.clone(), self.func_params[function][name].clone())
+                        }
+                        Symbol::Return { function, .. } => {
+                            (symbol.clone(), self.func_returns[function].clone())
+                        }
+                    })
+            })
             .flatten()
             .collect()
     }
@@ -302,8 +370,8 @@ impl SymbolTable {
         let mut modified = true;
         while modified {
             modified = false;
-            for (symbol, mut type_bound) in self.get_all_symbols() {
-                modified |= self.resolve_symbol(&symbol, &mut type_bound, errors);
+            for (symbol, type_bound) in self.get_global_symbols() {
+                modified |= self.resolve_symbol(symbol, type_bound, errors)
             }
         }
     }
@@ -353,34 +421,40 @@ impl SymbolTable {
     /// symbol is successfully bounded.
     fn resolve_symbol(
         &mut self,
-        symbol: &Symbol,
-        type_bound: &mut TypeBound,
+        symbol: Symbol,
+        mut type_bound: TypeBound,
         errors: &mut Vec<(String, Location)>,
     ) -> bool {
-        match symbol {
-            Symbol::Variable { .. } | Symbol::Expression { .. } => {
-                self.resolve_type_bound(symbol, type_bound, errors)
-            }
-            Symbol::Parameter { .. } | Symbol::Return { .. } => {
-                let mut type_bound = self.get_type_bound(symbol).unwrap();
-                self.resolve_type_bound(symbol, &mut type_bound, errors)
+        // Check for the bounded/wrapped type.
+        let mut has_bounded = true;
+        if type_bound.bounded.is_none() {
+            if let Some(typ) = &type_bound.wrapped {
+                if let Some(typ) = typ.borrow().specialized() {
+                    type_bound.bounded = Some(typ);
+                    self.update_global_type_bound(symbol.clone(), type_bound.clone());
+                    has_bounded = false;
+                }
             }
         }
-    }
 
-    /// Resolve a type bound.
-    fn resolve_type_bound(
-        &self,
-        symbol: &Symbol,
-        type_bound: &mut TypeBound,
-        errors: &mut Vec<(String, Location)>,
-    ) -> bool {
         // Unify upper bounds.
         let mut upper = Type::Any;
-        for bound in type_bound.upper.iter() {
+        for bound in type_bound.upper.iter_mut() {
             match bound {
-                Bound::Type { refer, location } => {
-                    upper = match Type::compare_types(&upper, refer) {
+                Bound::Type {
+                    refer,
+                    pointer,
+                    location,
+                } => {
+                    let refer = match self.pointer_transformation(refer, pointer) {
+                        Some(refer) => refer,
+                        None => {
+                            let message = format!("`{}` should be a pointer.", symbol);
+                            errors.push((message, Location::default()));
+                            return false;
+                        }
+                    };
+                    upper = match Type::compare_types(&upper, &refer) {
                         TypeRelationship::Sub => upper,
                         TypeRelationship::Equal => refer.clone(),
                         TypeRelationship::Super => refer.clone(),
@@ -392,12 +466,29 @@ impl SymbolTable {
                             errors.push((message, location.clone()));
                             return false;
                         }
-                    }
+                    };
                 }
-                Bound::Symbol { refer, location } => {
-                    let type_bound = self.get_type_bound(refer).unwrap();
+                Bound::Symbol {
+                    refer,
+                    pointer,
+                    location,
+                } => {
+                    let type_bound = self.get_global_type_bound(refer).unwrap();
+                    // if let Symbol::Expression { scope, count, .. } = &symbol {
+                    //     if scope == &1 && count == &0 {
+                    //         println!("*** {} - {:?}", refer, type_bound);
+                    //     }
+                    // }
                     if let Some(bounded) = &type_bound.bounded {
-                        upper = match Type::compare_types(&upper, bounded) {
+                        let bounded = match self.pointer_transformation(bounded, pointer) {
+                            Some(bounded) => bounded,
+                            None => {
+                                let message = format!("`{}` should be a pointer.", symbol);
+                                errors.push((message, Location::default()));
+                                return false;
+                            }
+                        };
+                        upper = match Type::compare_types(&upper, &bounded) {
                             TypeRelationship::Sub => upper,
                             TypeRelationship::Equal => bounded.clone(),
                             TypeRelationship::Super => bounded.clone(),
@@ -419,10 +510,22 @@ impl SymbolTable {
 
         // Unify lower bounds.
         let mut lower = Type::Nothing;
-        for bound in type_bound.lower.iter() {
+        for bound in type_bound.lower.iter_mut() {
             match bound {
-                Bound::Type { refer, location } => {
-                    lower = match Type::compare_types(&lower, refer) {
+                Bound::Type {
+                    refer,
+                    pointer,
+                    location,
+                } => {
+                    let refer = match self.pointer_transformation(refer, pointer) {
+                        Some(refer) => refer,
+                        None => {
+                            let message = format!("`{}` should be a pointer.", symbol);
+                            errors.push((message, Location::default()));
+                            return false;
+                        }
+                    };
+                    lower = match Type::compare_types(&lower, &refer) {
                         TypeRelationship::Sub => refer.clone(),
                         TypeRelationship::Equal => refer.clone(),
                         TypeRelationship::Super => lower,
@@ -434,12 +537,24 @@ impl SymbolTable {
                             errors.push((message, location.clone()));
                             return false;
                         }
-                    }
+                    };
                 }
-                Bound::Symbol { refer, location } => {
-                    let type_bound = self.get_type_bound(refer).unwrap();
+                Bound::Symbol {
+                    refer,
+                    pointer,
+                    location,
+                } => {
+                    let type_bound = self.get_global_type_bound(refer).unwrap();
                     if let Some(bounded) = &type_bound.bounded {
-                        lower = match Type::compare_types(&lower, bounded) {
+                        let bounded = match self.pointer_transformation(bounded, pointer) {
+                            Some(bounded) => bounded,
+                            None => {
+                                let message = format!("`{}` should be a pointer.", symbol);
+                                errors.push((message, Location::default()));
+                                return false;
+                            }
+                        };
+                        lower = match Type::compare_types(&lower, &bounded) {
                             TypeRelationship::Sub => bounded.clone(),
                             TypeRelationship::Equal => bounded.clone(),
                             TypeRelationship::Super => lower,
@@ -451,7 +566,7 @@ impl SymbolTable {
                                 errors.push((message, location.clone()));
                                 return false;
                             }
-                        }
+                        };
                     } else {
                         return false;
                     }
@@ -461,9 +576,9 @@ impl SymbolTable {
 
         // Unify `infix`.
         let mut infix = Type::Nothing;
-        if let Some((left_symbol, right_symbol)) = &type_bound.infix {
-            let left_type_bound = self.get_type_bound(left_symbol).unwrap();
-            let right_type_bound = self.get_type_bound(right_symbol).unwrap();
+        if let Some((left_symbol, right_symbol)) = &mut type_bound.infix {
+            let left_type_bound = self.get_global_type_bound(left_symbol).unwrap();
+            let right_type_bound = self.get_global_type_bound(right_symbol).unwrap();
             if let (Some(left), Some(right)) = &(left_type_bound.bounded, right_type_bound.bounded)
             {
                 infix = match Type::compare_types(left, right) {
@@ -567,31 +682,6 @@ impl SymbolTable {
             }
         }
 
-        // Perform `pointer` transformation.
-        if let Some(true) = &type_bound.pointer {
-            type_ = Type::Pointer {
-                refer: Box::new(type_),
-                location: None,
-            };
-        } else if let Some(false) = &type_bound.pointer {
-            type_ = if let Type::Pointer { refer, .. } = type_ {
-                *refer
-            } else {
-                let message = format!("`{}` should be a pointer.", symbol);
-                errors.push((message, Location::default()));
-                return false;
-            }
-        }
-
-        // Check for the bounded/wrapped type.
-        if type_bound.bounded.is_none() {
-            if let Some(typ) = &type_bound.wrapped {
-                if let Some(typ) = typ.borrow().specialized() {
-                    type_bound.bounded = Some(typ);
-                }
-            }
-        }
-
         // Unify `type_` and `type_bound.bounded`.
         if let Some(bounded) = &type_bound.bounded {
             match Type::compare_types(&type_, bounded) {
@@ -612,10 +702,33 @@ impl SymbolTable {
                     errors.push((message, bounded.locate()));
                 }
             }
-            false
+            if has_bounded {
+                false
+            } else {
+                true
+            }
         } else {
             type_bound.bounded = Some(type_);
+            self.update_global_type_bound(symbol.clone(), type_bound.clone());
             true
+        }
+    }
+
+    /// Perform `pointer` transformation.
+    fn pointer_transformation(&self, type_: &Type, pointer: &Option<bool>) -> Option<Type> {
+        match pointer {
+            Some(true) => Some(Type::Pointer {
+                refer: Box::new(type_.clone()),
+                location: None,
+            }),
+            Some(false) => {
+                if let Type::Pointer { refer, .. } = type_ {
+                    Some((**refer).clone())
+                } else {
+                    None
+                }
+            }
+            None => Some(type_.clone()),
         }
     }
 
@@ -852,11 +965,14 @@ impl<'a> Resolver<'a> {
     fn analyse_statement_return(&mut self, expression: &Option<Expression>, location: &Location) {
         // Get the corresponding type bound.
         let current_func = self.symbol_table.current_func.clone().unwrap();
-        let return_symbol = Symbol::Return {
+        let mut return_symbol = Symbol::Return {
             scope: self.symbol_table.current_scope,
             function: current_func.clone(),
         };
-        let mut return_type_bound = self.symbol_table.get_type_bound(&return_symbol).unwrap();
+        let mut return_type_bound = self
+            .symbol_table
+            .get_local_type_bound(&mut return_symbol)
+            .unwrap();
 
         // Add constraints.
         match expression {
@@ -864,26 +980,30 @@ impl<'a> Resolver<'a> {
                 if let Ok((expr_symbol, mut expr_type_bound)) = self.analyse_expression(expr) {
                     return_type_bound.lower.push(Bound::Symbol {
                         refer: expr_symbol.clone(),
+                        pointer: None,
                         location: expr.locate(),
                     });
                     expr_type_bound.upper.push(Bound::Symbol {
                         refer: return_symbol.clone(),
+                        pointer: None,
                         location: expr.locate(),
                     });
                     self.symbol_table
-                        .update_type_bound(return_symbol, return_type_bound);
+                        .update_local_type_bound(return_symbol, return_type_bound);
                     self.symbol_table
-                        .update_type_bound(expr_symbol, expr_type_bound);
+                        .update_local_type_bound(expr_symbol, expr_type_bound);
                 }
             }
             None => {
                 let type_void = Type::Void(None);
                 return_type_bound.upper.push(Bound::Type {
                     refer: type_void.clone(),
+                    pointer: None,
                     location: location.clone(),
                 });
                 return_type_bound.lower.push(Bound::Type {
                     refer: type_void.clone(),
+                    pointer: None,
                     location: location.clone(),
                 });
             }
@@ -918,10 +1038,12 @@ impl<'a> Resolver<'a> {
                 let mut type_bound = TypeBound::wrapped(&type_);
                 type_bound.upper.push(Bound::Type {
                     refer: type_.borrow().clone(),
+                    pointer: None,
                     location: type_.borrow().locate(),
                 });
                 type_bound.lower.push(Bound::Type {
                     refer: type_.borrow().clone(),
+                    pointer: None,
                     location: type_.borrow().locate(),
                 });
 
@@ -952,6 +1074,7 @@ impl<'a> Resolver<'a> {
                             match members.get(field) {
                                 Some(type_) => expr_type_bound.upper.push(Bound::Type {
                                     refer: type_.clone(),
+                                    pointer: None,
                                     location: location.clone(),
                                 }),
                                 None => {
@@ -963,7 +1086,7 @@ impl<'a> Resolver<'a> {
 
                             // Update the type bound.
                             self.symbol_table
-                                .update_type_bound(expr_symbol, expr_type_bound);
+                                .update_local_type_bound(expr_symbol, expr_type_bound);
                         }
                     }
                     Some(_) => {
@@ -975,7 +1098,8 @@ impl<'a> Resolver<'a> {
                 }
 
                 // Update the type bound.
-                self.symbol_table.update_type_bound(symbol, type_bound);
+                self.symbol_table
+                    .update_local_type_bound(symbol, type_bound);
             }
         } else {
             // Find other variables.
@@ -989,10 +1113,12 @@ impl<'a> Resolver<'a> {
                 let mut type_bound = TypeBound::wrapped(type_);
                 type_bound.upper.push(Bound::Type {
                     refer: type_.borrow().clone(),
+                    pointer: None,
                     location: type_.borrow().locate(),
                 });
                 type_bound.lower.push(Bound::Type {
                     refer: type_.borrow().clone(),
+                    pointer: None,
                     location: type_.borrow().locate(),
                 });
 
@@ -1015,23 +1141,38 @@ impl<'a> Resolver<'a> {
                                 return;
                             }
 
-                            // Add constraints.
+                            // Change initializers to the array type.
                             if expr.is_err() {
                                 return;
                             }
                             let (expr_symbol, mut expr_type_bound) = expr.unwrap();
+                            if let Some(bounded) = expr_type_bound.bounded {
+                                expr_type_bound.bounded = Some(Type::Array {
+                                    content: Box::new(bounded),
+                                    length: None,
+                                    location: None,
+                                });
+                            } else {
+                                let message = "Array initializers should be constants";
+                                self.push_error(&message, location);
+                                return;
+                            }
+
+                            // Add constraints.
                             type_bound.lower.push(Bound::Symbol {
                                 refer: expr_symbol.clone(),
+                                pointer: None,
                                 location: location.clone(),
                             });
                             expr_type_bound.upper.push(Bound::Symbol {
                                 refer: symbol.clone(),
+                                pointer: None,
                                 location: location.clone(),
                             });
 
                             // Update the type bound.
                             self.symbol_table
-                                .update_type_bound(expr_symbol, expr_type_bound);
+                                .update_local_type_bound(expr_symbol, expr_type_bound);
                         }
                     }
                     Some(expr) => {
@@ -1046,22 +1187,25 @@ impl<'a> Resolver<'a> {
                         let (expr_symbol, mut expr_type_bound) = expr.unwrap();
                         type_bound.lower.push(Bound::Symbol {
                             refer: expr_symbol.clone(),
+                            pointer: None,
                             location: location.clone(),
                         });
                         expr_type_bound.upper.push(Bound::Symbol {
                             refer: symbol.clone(),
+                            pointer: None,
                             location: location.clone(),
                         });
 
                         // Update the type bound.
                         self.symbol_table
-                            .update_type_bound(expr_symbol, expr_type_bound);
+                            .update_local_type_bound(expr_symbol, expr_type_bound);
                     }
                     None => (),
                 }
 
                 // Update the type bound.
-                self.symbol_table.update_type_bound(symbol, type_bound);
+                self.symbol_table
+                    .update_local_type_bound(symbol, type_bound);
             }
         }
     }
@@ -1161,7 +1305,7 @@ impl<'a> Resolver<'a> {
         value: &str,
         location: &Location,
     ) -> Result<(Symbol, TypeBound), ()> {
-        let symbol = if self.symbol_table.is_parameter(value) {
+        let mut symbol = if self.symbol_table.is_parameter(value) {
             Symbol::Parameter {
                 function: self.symbol_table.current_func.clone().unwrap(),
                 scope: self.symbol_table.current_scope,
@@ -1175,7 +1319,7 @@ impl<'a> Resolver<'a> {
             }
         };
         self.symbol_table
-            .get_type_bound(&symbol)
+            .get_local_type_bound(&mut symbol)
             .map(|type_bound| (symbol, type_bound))
             .ok_or_else(|| {
                 let message = format!("Undefined variable `{}`.", value);
@@ -1276,31 +1420,34 @@ impl<'a> Resolver<'a> {
                 // Allow numerical types.
                 expr_type_bound.upper.push(Bound::Type {
                     refer: Type::Double(None),
+                    pointer: None,
                     location: location.clone(),
                 });
                 expr_type_bound.lower.push(Bound::Type {
                     refer: Type::Byte,
+                    pointer: None,
                     location: location.clone(),
                 });
                 let symbol = self.symbol_table.make_expression_symbol(location);
                 let type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
+                    pointer: None,
                     location: location.clone(),
                 });
                 self.symbol_table.define_symbol(&symbol, &type_bound);
                 self.symbol_table
-                    .update_type_bound(expr_symbol, expr_type_bound);
+                    .update_local_type_bound(expr_symbol, expr_type_bound);
                 Ok((symbol, type_bound))
             }
             "&" => {
                 // Allow any types.
                 // Set `TypeBound::pointer`.
                 let symbol = self.symbol_table.make_expression_symbol(location);
-                let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
+                let type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
+                    pointer: Some(true),
                     location: location.clone(),
                 });
-                type_bound.pointer = Some(true);
                 self.symbol_table.define_symbol(&symbol, &type_bound);
                 Ok((symbol, type_bound))
             }
@@ -1308,11 +1455,11 @@ impl<'a> Resolver<'a> {
                 // Allow pointer types.
                 // Set `TypeBound::pointer`.
                 let symbol = self.symbol_table.make_expression_symbol(location);
-                let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
+                let type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
+                    pointer: Some(false),
                     location: location.clone(),
                 });
-                type_bound.pointer = Some(false);
                 self.symbol_table.define_symbol(&symbol, &type_bound);
                 Ok((symbol, type_bound))
             }
@@ -1327,13 +1474,12 @@ impl<'a> Resolver<'a> {
         right: &Expression,
     ) -> Result<(Symbol, TypeBound), ()> {
         let (left_symbol, left_type_bound) = self.analyse_expression(left)?;
-        let (right_symbol, _) = self.analyse_expression(right)?;
-
         let symbol = self.symbol_table.make_expression_symbol(&left.locate());
         let type_bound = match operator {
             "+" | "-" | "*" | "/" | "%" => {
                 // Allow any types.
                 // Set `TypeBound::infix`.
+                let (right_symbol, _) = self.analyse_expression(right)?;
                 TypeBound::infixed(&left_symbol, &right_symbol)
             }
             "=" | "+=" | "-=" | "*=" | "/=" | "%=" => {
@@ -1360,6 +1506,7 @@ impl<'a> Resolver<'a> {
                 };
                 let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: left_symbol.clone(),
+                    pointer: None,
                     location: left.locate(),
                 });
                 type_bound.member = Some(name.to_string());
@@ -1377,6 +1524,7 @@ impl<'a> Resolver<'a> {
                 };
                 let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: left_symbol.clone(),
+                    pointer: None,
                     location: left.locate(),
                 });
                 type_bound.ptr_mem = Some(name.to_string());
@@ -1403,6 +1551,7 @@ impl<'a> Resolver<'a> {
                     .make_expression_symbol(&expression.locate());
                 let type_bound = TypeBound::squeezed(&Bound::Symbol {
                     refer: expr_symbol.clone(),
+                    pointer: None,
                     location: expression.locate(),
                 });
                 self.symbol_table.define_symbol(&symbol, &type_bound);
@@ -1423,32 +1572,36 @@ impl<'a> Resolver<'a> {
         // index must be integral types.
         index_type_bound.upper.push(Bound::Type {
             refer: Type::Long(None),
+            pointer: None,
             location: index.locate(),
         });
         index_type_bound.lower.push(Bound::Type {
             refer: Type::Byte,
+            pointer: None,
             location: index.locate(),
         });
         self.symbol_table
-            .update_type_bound(index_symbol.clone(), index_type_bound.clone());
+            .update_local_type_bound(index_symbol.clone(), index_type_bound.clone());
 
         // Require the expression to be a pointer.
         expr_type_bound.upper.push(Bound::Type {
             refer: Type::AnyRef,
+            pointer: None,
             location: expression.locate(),
         });
         expr_type_bound.lower.push(Bound::Type {
             refer: Type::Null,
+            pointer: None,
             location: expression.locate(),
         });
         let symbol = self
             .symbol_table
             .make_expression_symbol(&expression.locate());
-        let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
+        let type_bound = TypeBound::squeezed(&Bound::Symbol {
             refer: expr_symbol.clone(),
+            pointer: Some(true),
             location: expression.locate(),
         });
-        type_bound.pointer = Some(true);
         self.symbol_table.define_symbol(&symbol, &type_bound);
         Ok((symbol, type_bound))
     }
@@ -1498,10 +1651,12 @@ impl<'a> Resolver<'a> {
                 };
                 arg_type_bound.upper.push(Bound::Symbol {
                     refer: param_symbol.clone(),
+                    pointer: None,
                     location: arg.locate(),
                 });
                 param_type_bound.lower.push(Bound::Symbol {
                     refer: arg_symbol.clone(),
+                    pointer: None,
                     location: arg.locate(),
                 });
                 self.symbol_table
@@ -1517,6 +1672,7 @@ impl<'a> Resolver<'a> {
             let mut type_bound = TypeBound::new();
             type_bound.lower.push(Bound::Symbol {
                 refer: return_symbol.clone(),
+                pointer: None,
                 location: expression.locate(),
             });
             self.symbol_table

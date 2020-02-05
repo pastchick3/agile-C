@@ -327,12 +327,8 @@ impl Type {
 
         // Check for unspecialized types, and extract specialized types.
         match (left, right) {
-            (Any, Any)
-            | (Nothing, Nothing)
-            | (AnyRef, AnyRef)
-            | (Null, Null)
-            | (T(None), _)
-            | (_, T(None)) => return Invalid,
+            (Any, Any) | (Nothing, Nothing) | (AnyRef, AnyRef) | (Null, Null) => return Equal,
+            (T(None), _) | (_, T(None)) => return Invalid,
             _ => (),
         }
         let left = &left.specialized().unwrap();
@@ -342,14 +338,6 @@ impl Type {
         // equal to the other types in assignments.
         // Arrays cannot be changed, but they can be assigned to a pointer.
         match (left, right) {
-            (Array { .. }, _) => return Invalid,
-            (Pointer { refer, .. }, Array { content, .. }) => {
-                if refer == content {
-                    return Equal;
-                } else {
-                    return Invalid;
-                }
-            }
             (Pointer { refer: left, .. }, Pointer { refer: right, .. }) => {
                 if left == right {
                     return Equal;
@@ -359,6 +347,17 @@ impl Type {
             }
             (AnyRef, Pointer { .. }) | (Pointer { .. }, Null) => return Super,
             (Pointer { .. }, AnyRef) | (Null, Pointer { .. }) => return Sub,
+            (Pointer { refer, .. }, Array { content, .. }) => {
+                if refer == content {
+                    return Equal;
+                } else {
+                    return Invalid;
+                }
+            }
+            (Array { content: left, .. }, Array { content: right, .. }) => {
+                // We allow this rule to enable array initialization.
+                return Self::compare_types(left, right);
+            }
             _ => (),
         }
 
