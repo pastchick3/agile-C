@@ -21,16 +21,18 @@ use structure::Error;
 /// use agile_c::Transpiler;
 ///
 /// let input = "
-///     func() {
+///     func(a) {
 ///         a = 1.1;
-///         return a;
+///         b = 0.9;
+///         return a + b;
 ///     }
 /// ";
 ///
 /// let expected_output =
-/// "float func() {
-///     float a = 1.1;
-///     return a;
+/// "float func(float a) {
+///     a = 1.1;
+///     float b = 0.9;
+///     return a + b;
 /// }
 /// ";
 ///

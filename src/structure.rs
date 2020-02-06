@@ -244,9 +244,9 @@ impl Locate for Type {
         use Type::*;
 
         match self {
-            Any | Nothing | AnyRef | Null | Byte => panic!("Try to locate a dummy type."),
+            Any | Nothing | AnyRef | Null | Byte => Location::default(),
             T(Some(type_)) => type_.locate(),
-            T(None) => panic!("Try to locate a dummy type."),
+            T(None) => Location::default(),
             Void(location)
             | Char(location)
             | Struct { location, .. }
@@ -259,7 +259,7 @@ impl Locate for Type {
             | Int(location)
             | UnsignedInt(location)
             | Short(location)
-            | UnsignedShort(location) => location.clone().expect("Try to locate a dummy type."),
+            | UnsignedShort(location) => location.clone().unwrap_or_default(),
         }
     }
 }
@@ -317,6 +317,18 @@ impl Type {
         }
     }
 
+    /// Check whether a type is a dummy type.
+    pub fn is_dummy_type(type_: &Type) -> bool {
+        use Type::*;
+
+        match type_ {
+            Any | Nothing | Byte | AnyRef | Null => true,
+            Pointer { refer, .. } => Self::is_dummy_type(refer),
+            Array { content, .. } => Self::is_dummy_type(content),
+            _ => false,
+        }
+    }
+
     /// Determine the relationship of `left` type and `right` type.
     ///
     /// We treat `right` as the comparision base, which means if this function
@@ -326,10 +338,14 @@ impl Type {
         use TypeRelationship::*;
 
         // Check for unspecialized types, and extract specialized types.
-        match (left, right) {
-            (Any, Any) | (Nothing, Nothing) | (AnyRef, AnyRef) | (Null, Null) => return Equal,
-            (T(None), _) | (_, T(None)) => return Invalid,
-            _ => (),
+        if let (T(None), _)
+        | (_, T(None))
+        | (Any, Any)
+        | (Nothing, Nothing)
+        | (AnyRef, AnyRef)
+        | (Null, Null) = (left, right)
+        {
+            return Equal;
         }
         let left = &left.specialized().unwrap();
         let right = &right.specialized().unwrap();

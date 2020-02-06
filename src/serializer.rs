@@ -226,7 +226,20 @@ impl Serializer {
                 declarators,
                 ..
             } => {
-                self.serialize_type(&base_type.borrow());
+                if declarators.is_empty() {
+                    // Find a structure definition.
+                    self.serialize_type(&base_type.borrow());
+                } else {
+                    //Find other definitions.
+                    let mut type_ = &declarators[0].0.borrow().clone();
+                    while let Type::Pointer { refer: inner, .. }
+                    | Type::Array { content: inner, .. } = type_
+                    {
+                        type_ = inner;
+                    }
+                    self.serialize_type(type_);
+                }
+
                 for (type_, ident, init) in declarators {
                     self.serialize_pointer_marker(&type_.borrow());
                     self.push_str(ident);
