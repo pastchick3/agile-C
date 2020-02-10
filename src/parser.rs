@@ -921,7 +921,11 @@ impl<'a> Parser<'a> {
                     }
                     // Parse the delimiter.
                     match self.tokens.pop() {
-                        Some(Token::Comma(_)) => (),
+                        Some(Token::Comma(_)) => {
+                            if let Some(Token::RBrace(_)) = self.tokens.last() {
+                                break;
+                            }
+                        }
                         Some(tk @ Token::RBrace(_)) => {
                             self.tokens.push(tk);
                             break;
@@ -944,7 +948,11 @@ impl<'a> Parser<'a> {
                     initializers.push((None, self.parse_expression(0)?));
                     // Parse the delimiter.
                     match self.tokens.pop() {
-                        Some(Token::Comma(_)) => (),
+                        Some(Token::Comma(_)) => {
+                            if let Some(Token::RBrace(_)) = self.tokens.last() {
+                                break;
+                            }
+                        }
                         Some(tk @ Token::RBrace(_)) => {
                             self.tokens.push(tk);
                             break;
@@ -1843,7 +1851,7 @@ mod tests {
                 struct A {
                     int a;
                     float b;
-                } a = { 1, .b = 2 };
+                } a = { 1, .b = 2, };
             }
         ";
         let expected_errors = vec![];
