@@ -109,6 +109,7 @@ impl Serializer {
     fn serialize_type(&mut self, type_: &Type) {
         match type_ {
             Type::T(Some(typ)) => self.serialize_type(typ),
+            Type::Byte => self.push_str_space("short"), // promote byte to short
             Type::Void(_) => self.push_str_space("void"),
             Type::Char(_) => self.push_str_space("char"),
             Type::Double(_) => self.push_str_space("double"),
@@ -148,6 +149,7 @@ impl Serializer {
     /// This function will automatically add nothing when done.
     fn serialize_pointer_marker(&mut self, type_: &Type) {
         match type_ {
+            Type::T(Some(type_)) => self.serialize_pointer_marker(type_),
             Type::Array { content, .. } => {
                 // In a complex type combining arrays and pointers,
                 // pointers are nested deeper than arrays.
@@ -164,6 +166,7 @@ impl Serializer {
     /// This function will automatically add nothing when done.
     fn serialize_array_marker(&mut self, type_: &Type) {
         match type_ {
+            Type::T(Some(type_)) => self.serialize_array_marker(type_),
             Type::Array {
                 content, length, ..
             } => {

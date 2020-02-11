@@ -317,12 +317,86 @@ impl Type {
         }
     }
 
+    /// Specialize `lower` to a concrete type, based on its
+    /// relationship with `upper`.
+    pub fn specialize_dummy_type(upper: &Type, lower: &Type) -> Option<Type> {
+        if !Type::is_dummy_type(lower) {
+            return Some(lower.clone());
+        }
+
+        match lower {
+            Type::Byte => Some(lower.clone()),
+            Type::Pointer { refer, location } => {
+                let refer = Type::specialize_dummy_type(upper, refer)?;
+                Some(Type::Pointer {
+                    refer: Box::new(refer),
+                    location: location.clone(),
+                })
+            }
+            Type::Array {
+                content,
+                length,
+                location,
+            } => {
+                let content = Type::specialize_dummy_type(upper, content)?;
+                Some(Type::Array {
+                    content: Box::new(content),
+                    length: length.clone(),
+                    location: location.clone(),
+                })
+            }
+            Type::Any => None,
+            Type::AnyRef => None,
+            Type::Null => {
+                if !Type::is_dummy_type(upper) {
+                    match upper {
+                        Type::Pointer { .. } => Some(upper.clone()),
+                        Type::Array { content, .. } => {
+                            let content = Type::specialize_dummy_type(content, lower)?;
+                            Some(Type::Array {
+                                content: Box::new(content),
+                                length: None,
+                                location: None,
+                            })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            Type::Nothing => match upper {
+                Type::Double(_)
+                | Type::Float(_)
+                | Type::Long(_)
+                | Type::UnsignedLong(_)
+                | Type::Int(_)
+                | Type::UnsignedInt(_)
+                | Type::Short(_)
+                | Type::UnsignedShort(_)
+                | Type::Byte => Some(Type::Byte),
+                Type::Array { content, .. } => {
+                    let content = Type::specialize_dummy_type(content, lower)?;
+                    Some(Type::Array {
+                        content: Box::new(content),
+                        length: None,
+                        location: None,
+                    })
+                }
+                upper if !Type::is_dummy_type(upper) => Some(upper.clone()),
+                _ => None,
+            },
+            _ => unreachable!(),
+        }
+    }
+
     /// Check whether a type is a dummy type.
     pub fn is_dummy_type(type_: &Type) -> bool {
         use Type::*;
 
         match type_ {
-            Any | Nothing | Byte | AnyRef | Null => true,
+            Any | Nothing | AnyRef | Null => true,
+            Byte => false, // Byte is promoted to Shoty in the end.
             Pointer { refer, .. } => Self::is_dummy_type(refer),
             Array { content, .. } => Self::is_dummy_type(content),
             _ => false,

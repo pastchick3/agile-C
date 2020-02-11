@@ -678,8 +678,12 @@ impl SymbolTable {
                 errors.push((message, Location::default()));
                 return false;
             }
-            TypeRelationship::Equal => type_,
-            TypeRelationship::Super => type_,
+            TypeRelationship::Equal | TypeRelationship::Super => {
+                match Type::specialize_dummy_type(&upper, &type_) {
+                    Some(typ) => typ,
+                    None => type_,
+                }
+            }
             TypeRelationship::Invalid => {
                 let message = format!(
                     "Incompatible types `{}` and `{}` for `{}`.",
@@ -764,13 +768,8 @@ impl SymbolTable {
                 true
             }
         } else {
-            // Promote `Type::Byte` to `Type::Short`, and reject other dummy types.
+            // Bound concrete types and reject dummy types.
             match type_ {
-                Type::Byte => {
-                    type_bound.bounded = Some(Type::Short(None));
-                    self.update_global_type_bound(symbol.clone(), type_bound.clone());
-                    true
-                }
                 typ if Type::is_dummy_type(&typ) => false,
                 typ => {
                     type_bound.bounded = Some(typ);
@@ -788,13 +787,11 @@ impl SymbolTable {
                 refer: Box::new(type_.clone()),
                 location: None,
             }),
-            Some(false) => {
-                if let Type::Pointer { refer, .. } = type_ {
-                    Some((**refer).clone())
-                } else {
-                    None
-                }
-            }
+            Some(false) => match type_ {
+                Type::Pointer { refer, .. } => Some((**refer).clone()),
+                Type::Array { content, .. } => Some((**content).clone()),
+                _ => None,
+            },
             None => Some(type_.clone()),
         }
     }
@@ -1681,12 +1678,14 @@ impl<'a> Resolver<'a> {
             pointer: None,
             location: expression.locate(),
         });
+
+        // Set the pointer flag in the type bound.
         let symbol = self
             .symbol_table
             .make_expression_symbol(&expression.locate());
         let type_bound = TypeBound::squeezed(&Bound::Symbol {
             refer: expr_symbol.clone(),
-            pointer: Some(true),
+            pointer: Some(false),
             location: expression.locate(),
         });
         self.symbol_table.define_symbol(&symbol, &type_bound);
@@ -1802,7 +1801,7 @@ mod tests {
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::T(None))),
                         declarators: vec![(
-                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Short(None)))))),
+                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
                             "a".to_string(),
                             Some(Expression::IntConst {
                                 value: 1,
@@ -1870,8 +1869,8 @@ mod tests {
     fn expression_prefix() {
         let source = "
             void f(void) {
-                a = (+1); // short
-                b = -a; // short
+                a = (+1); // byte
+                b = -a; // byte
                 c = !b; // int
                 d = ++c; // int
                 e = --d; // int
@@ -1890,7 +1889,7 @@ mod tests {
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::T(None))),
                         declarators: vec![(
-                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Short(None)))))),
+                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
                             "a".to_string(),
                             Some(Expression::Group {
                                 expression: Box::new(Expression::Prefix {
@@ -1909,7 +1908,7 @@ mod tests {
                     Statement::Def {
                         base_type: Rc::new(RefCell::new(Type::T(None))),
                         declarators: vec![(
-                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Short(None)))))),
+                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
                             "b".to_string(),
                             Some(Expression::Prefix {
                                 expression: Box::new(Expression::Ident {
@@ -2307,421 +2306,230 @@ mod tests {
         assert_eq!(ast, expected_ast);
     }
 
-    // #[test]
-    // fn function() {
-    //     let source = "
-    //         f(a) {
-    //             return a;
-    //         }
+    #[test]
+    fn function() {
+        let source = "
+            f(a) {
+                return a;
+            }
 
-    //         m() {
-    //             f(1);
-    //             return;
-    //         }
-    //     ";
-    //     let expected_errors = vec![];
-    //     let expected_ast = vec![
-    //         StaticObject::Function(Box::new(Function {
-    //             return_type: Rc::new(RefCell::new(Type::T {
-    //                 array_flag: false,
-    //                 array_len: None,
-    //                 pointer_flag: false,
-    //                 specialized: Some(Box::new(Type::Short {
-    //                     signed_flag: true,
-    //                     array_flag: false,
-    //                     array_len: None,
-    //                     pointer_flag: false,
-    //                     location: Location::default(),
-    //                 })),
-    //                 location: Location::default(),
-    //             })),
-    //             name: "f".to_string(),
-    //             parameters: [(
-    //                 "a".to_string(),
-    //                 Rc::new(RefCell::new(Type::T {
-    //                     array_flag: false,
-    //                     array_len: None,
-    //                     pointer_flag: false,
-    //                     specialized: Some(Box::new(Type::Short {
-    //                         signed_flag: true,
-    //                         array_flag: false,
-    //                         array_len: None,
-    //                         pointer_flag: false,
-    //                         location: Location::default(),
-    //                     })),
-    //                     location: Location::default(),
-    //                 })),
-    //             )]
-    //             .iter()
-    //             .cloned()
-    //             .collect(),
-    //             body: Statement::Block {
-    //                 statements: vec![Statement::Return {
-    //                     expression: Some(Expression::Ident {
-    //                         value: "a".to_string(),
-    //                         location: Location::default(),
-    //                     }),
-    //                     location: Location::default(),
-    //                 }],
-    //                 location: Location::default(),
-    //             },
-    //             location: Location::default(),
-    //         })),
-    //         StaticObject::Function(Box::new(Function {
-    //             return_type: Rc::new(RefCell::new(Type::T {
-    //                 array_flag: false,
-    //                 array_len: None,
-    //                 pointer_flag: false,
-    //                 specialized: Some(Box::new(Type::Void {
-    //                     array_flag: false,
-    //                     array_len: None,
-    //                     pointer_flag: false,
-    //                     location: Location::default(),
-    //                 })),
-    //                 location: Location::default(),
-    //             })),
-    //             name: "m".to_string(),
-    //             parameters: IndexMap::new(),
-    //             body: Statement::Block {
-    //                 statements: vec![
-    //                     Statement::Expr(Expression::Call {
-    //                         expression: Box::new(Expression::Ident {
-    //                             value: "f".to_string(),
-    //                             location: Location::default(),
-    //                         }),
-    //                         arguments: vec![Expression::IntConst {
-    //                             value: 1,
-    //                             location: Location::default(),
-    //                         }],
-    //                     }),
-    //                     Statement::Return {
-    //                         expression: None,
-    //                         location: Location::default(),
-    //                     },
-    //                 ],
-    //                 location: Location::default(),
-    //             },
-    //             location: Location::default(),
-    //         })),
-    //     ];
-    //     let mut errors = Vec::new();
-    //     let lines = Preprocessor::new("file", source, &mut errors)
-    //         .run()
-    //         .unwrap();
-    //     let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //     let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //     let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
-    //     assert_eq!(errors, expected_errors);
-    //     assert_eq!(ast, expected_ast);
-    // }
+            m(void) {
+                f(1);
+                return;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![
+            StaticObject::Function(Box::new(Function {
+                return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
+                name: "f".to_string(),
+                parameters: [(
+                    "a".to_string(),
+                    Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
+                )]
+                .iter()
+                .cloned()
+                .collect(),
+                ellipsis: false,
+                body: Statement::Block {
+                    statements: vec![Statement::Return {
+                        expression: Some(Expression::Ident {
+                            value: "a".to_string(),
+                            location: Location::default(),
+                        }),
+                        location: Location::default(),
+                    }],
+                    location: Location::default(),
+                },
+                location: Location::default(),
+            })),
+            StaticObject::Function(Box::new(Function {
+                return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Void(None)))))),
+                name: "m".to_string(),
+                parameters: IndexMap::new(),
+                ellipsis: false,
+                body: Statement::Block {
+                    statements: vec![
+                        Statement::Expr(Expression::Call {
+                            expression: Box::new(Expression::Ident {
+                                value: "f".to_string(),
+                                location: Location::default(),
+                            }),
+                            arguments: vec![Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            }],
+                        }),
+                        Statement::Return {
+                            expression: None,
+                            location: Location::default(),
+                        },
+                    ],
+                    location: Location::default(),
+                },
+                location: Location::default(),
+            })),
+        ];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
 
-    //     #[test]
-    //     fn function_reverse() {
-    //         let source = "
-    //             f() {
-    //                 a = 1;
-    //                 return a;
-    //             }
+    #[test]
+    fn function_reverse() {
+        let source = "
+            int f(a) {
+                b = a;
+                return b;
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: [(
+                "a".to_string(),
+                Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
+            )]
+            .iter()
+            .cloned()
+            .collect(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T(None))),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
+                            "b".to_string(),
+                            Some(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Return {
+                        expression: Some(Expression::Ident {
+                            value: "b".to_string(),
+                            location: Location::default(),
+                        }),
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
 
-    //             int m() {
-    //                 return f();
-    //             }
-    //         ";
-    //         let expected_errors = vec![];
-    //         let expected_ast = vec![
-    //             StaticObject::Function(Box::new(Function {
-    //                 return_type: Rc::new(RefCell::new(Type::T {
-    //                     array_flag: false,
-    //                     array_len: None,
-    //                     pointer_flag: false,
-    //                     specialized: Some(Box::new(Type::Short {
-    //                         signed_flag: true,
-    //                         array_flag: false,
-    //                         array_len: None,
-    //                         pointer_flag: false,
-    //                         location: Location::default(),
-    //                     })),
-    //                     location: Location::default(),
-    //                 })),
-    //                 name: "f".to_string(),
-    //                 parameters: IndexMap::new(),
-    //                 body: Statement::Block {
-    //                     statements: vec![
-    //                         Statement::Def {
-    //                             base_type: Rc::new(RefCell::new(Type::T {
-    //                                 array_flag: false,
-    //                                 array_len: None,
-    //                                 pointer_flag: false,
-    //                                 location: Location::default(),
-    //                                 specialized: None,
-    //                             })),
-    //                             declarators: vec![(
-    //                                 Rc::new(RefCell::new(Type::T {
-    //                                     array_flag: false,
-    //                                     array_len: None,
-    //                                     pointer_flag: false,
-    //                                     specialized: Some(Box::new(Type::Short {
-    //                                         signed_flag: true,
-    //                                         array_flag: false,
-    //                                         array_len: None,
-    //                                         pointer_flag: false,
-    //                                         location: Location::default(),
-    //                                     })),
-    //                                     location: Location::default(),
-    //                                 })),
-    //                                 "a".to_string(),
-    //                                 Some(Expression::IntConst {
-    //                                     value: 1,
-    //                                     location: Location::default(),
-    //                                 }),
-    //                             )],
-    //                             location: Location::default(),
-    //                         },
-    //                         Statement::Return {
-    //                             expression: Some(Expression::Ident {
-    //                                 value: "a".to_string(),
-    //                                 location: Location::default(),
-    //                             }),
-    //                             location: Location::default(),
-    //                         },
-    //                     ],
-    //                     location: Location::default(),
-    //                 },
-    //                 location: Location::default(),
-    //             })),
-    //             StaticObject::Function(Box::new(Function {
-    //                 return_type: Rc::new(RefCell::new(Type::Int {
-    //                     signed_flag: true,
-    //                     array_flag: false,
-    //                     array_len: None,
-    //                     pointer_flag: false,
-    //                     location: Location::default(),
-    //                 })),
-    //                 name: "m".to_string(),
-    //                 parameters: IndexMap::new(),
-    //                 body: Statement::Block {
-    //                     statements: vec![Statement::Return {
-    //                         expression: Some(Expression::Call {
-    //                             expression: Box::new(Expression::Ident {
-    //                                 value: "f".to_string(),
-    //                                 location: Location::default(),
-    //                             }),
-    //                             arguments: Vec::new(),
-    //                         }),
-    //                         location: Location::default(),
-    //                     }],
-    //                     location: Location::default(),
-    //                 },
-    //                 location: Location::default(),
-    //             })),
-    //         ];
-    //         let mut errors = Vec::new();
-    //         let lines = Preprocessor::new("file", source, &mut errors)
-    //             .run()
-    //             .unwrap();
-    //         let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //         let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //         let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
-    //         assert_eq!(errors, expected_errors);
-    //         assert_eq!(ast, expected_ast);
-    //     }
+    #[test]
+    fn implicit_return() {
+        let source = "
+            f(void) {}
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Void(None)))))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: Vec::new(),
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
 
-    //     #[test]
-    //     fn statement_for() {
-    //         let source = "
-    //             void f() {
-    //                 for (i = 1; ; ) ;
-    //             }
-    //         ";
-    //         let expected_errors = vec![];
-    //         let expected_ast = vec![StaticObject::Function(Box::new(Function {
-    //             return_type: Rc::new(RefCell::new(Type::Void {
-    //                 array_flag: false,
-    //                 array_len: None,
-    //                 pointer_flag: false,
-    //                 location: Location::default(),
-    //             })),
-    //             name: "f".to_string(),
-    //             parameters: IndexMap::new(),
-    //             body: Statement::Block {
-    //                 statements: vec![Statement::For {
-    //                     initialization: Some(Box::new(Statement::Def {
-    //                         base_type: Rc::new(RefCell::new(Type::T {
-    //                             array_flag: false,
-    //                             array_len: None,
-    //                             pointer_flag: false,
-    //                             location: Location::default(),
-    //                             specialized: None,
-    //                         })),
-    //                         declarators: vec![(
-    //                             Rc::new(RefCell::new(Type::T {
-    //                                 array_flag: false,
-    //                                 array_len: None,
-    //                                 pointer_flag: false,
-    //                                 specialized: Some(Box::new(Type::Short {
-    //                                     signed_flag: true,
-    //                                     array_flag: false,
-    //                                     array_len: None,
-    //                                     pointer_flag: false,
-    //                                     location: Location::default(),
-    //                                 })),
-    //                                 location: Location::default(),
-    //                             })),
-    //                             "i".to_string(),
-    //                             Some(Expression::IntConst {
-    //                                 value: 1,
-    //                                 location: Location::default(),
-    //                             }),
-    //                         )],
-    //                         location: Location::default(),
-    //                     })),
-    //                     condition: None,
-    //                     increment: None,
-    //                     body: Box::new(Statement::Null(Location::default())),
-    //                     location: Location::default(),
-    //                 }],
-    //                 location: Location::default(),
-    //             },
-    //             location: Location::default(),
-    //         }))];
-    //         let mut errors = Vec::new();
-    //         let lines = Preprocessor::new("file", source, &mut errors)
-    //             .run()
-    //             .unwrap();
-    //         let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //         let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //         let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
-    //         assert_eq!(errors, expected_errors);
-    //         assert_eq!(ast, expected_ast);
-    //     }
-
-    //     #[test]
-    //     fn array() {
-    //         let source = "
-    //             f() {
-    //                 T a[] = {1};
-    //                 return a[0];
-    //             }
-    //         ";
-    //         let expected_errors = vec![];
-    //         let expected_ast = vec![StaticObject::Function(Box::new(Function {
-    //             return_type: Rc::new(RefCell::new(Type::T {
-    //                 array_flag: false,
-    //                 array_len: None,
-    //                 pointer_flag: false,
-    //                 specialized: Some(Box::new(Type::Short {
-    //                     signed_flag: true,
-    //                     array_flag: false,
-    //                     array_len: None,
-    //                     pointer_flag: false,
-    //                     location: Location::default(),
-    //                 })),
-    //                 location: Location::default(),
-    //             })),
-    //             name: "f".to_string(),
-    //             parameters: IndexMap::new(),
-    //             body: Statement::Block {
-    //                 statements: vec![
-    //                     Statement::Def {
-    //                         base_type: Rc::new(RefCell::new(Type::T {
-    //                             array_flag: false,
-    //                             array_len: None,
-    //                             pointer_flag: false,
-    //                             location: Location::default(),
-    //                             specialized: None,
-    //                         })),
-    //                         declarators: vec![(
-    //                             Rc::new(RefCell::new(Type::T {
-    //                                 array_flag: true,
-    //                                 array_len: None,
-    //                                 pointer_flag: false,
-    //                                 specialized: Some(Box::new(Type::Short {
-    //                                     signed_flag: true,
-    //                                     array_flag: true,
-    //                                     array_len: None,
-    //                                     pointer_flag: false,
-    //                                     location: Location::default(),
-    //                                 })),
-    //                                 location: Location::default(),
-    //                             })),
-    //                             "a".to_string(),
-    //                             Some(Expression::InitList {
-    //                                 pairs: vec![(
-    //                                     None,
-    //                                     Expression::IntConst {
-    //                                         value: 1,
-    //                                         location: Location::default(),
-    //                                     },
-    //                                 )],
-    //                                 location: Location::default(),
-    //                             }),
-    //                         )],
-    //                         location: Location::default(),
-    //                     },
-    //                     Statement::Return {
-    //                         expression: Some(Expression::Index {
-    //                             expression: Box::new(Expression::Ident {
-    //                                 value: "a".to_string(),
-    //                                 location: Location::default(),
-    //                             }),
-    //                             index: Box::new(Expression::IntConst {
-    //                                 value: 0,
-    //                                 location: Location::default(),
-    //                             }),
-    //                         }),
-    //                         location: Location::default(),
-    //                     },
-    //                 ],
-    //                 location: Location::default(),
-    //             },
-    //             location: Location::default(),
-    //         }))];
-    //         let mut errors = Vec::new();
-    //         let lines = Preprocessor::new("file", source, &mut errors)
-    //             .run()
-    //             .unwrap();
-    //         let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //         let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //         let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
-    //         assert_eq!(errors, expected_errors);
-    //         assert_eq!(ast, expected_ast);
-    //     }
-
-    //     #[test]
-    //     fn implicit_return() {
-    //         let source = "
-    //             f() {}
-    //         ";
-    //         let expected_errors = vec![];
-    //         let expected_ast = vec![StaticObject::Function(Box::new(Function {
-    //             return_type: Rc::new(RefCell::new(Type::T {
-    //                 array_flag: false,
-    //                 array_len: None,
-    //                 pointer_flag: false,
-    //                 specialized: Some(Box::new(Type::Void {
-    //                     array_flag: false,
-    //                     array_len: None,
-    //                     pointer_flag: false,
-    //                     location: Location::default(),
-    //                 })),
-    //                 location: Location::default(),
-    //             })),
-    //             name: "f".to_string(),
-    //             parameters: IndexMap::new(),
-    //             body: Statement::Block {
-    //                 statements: Vec::new(),
-    //                 location: Location::default(),
-    //             },
-    //             location: Location::default(),
-    //         }))];
-    //         let mut errors = Vec::new();
-    //         let lines = Preprocessor::new("file", source, &mut errors)
-    //             .run()
-    //             .unwrap();
-    //         let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-    //         let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-    //         let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
-    //         assert_eq!(errors, expected_errors);
-    //         assert_eq!(ast, expected_ast);
-    //     }
+    #[test]
+    fn array() {
+        let source = "
+            f(void) {
+                a = { 1 };
+                return a[0];
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
+            name: "f".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Def {
+                        base_type: Rc::new(RefCell::new(Type::T(None))),
+                        declarators: vec![(
+                            Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Array {
+                                content: Box::new(Type::Byte),
+                                length: None,
+                                location: None,
+                            }))))),
+                            "a".to_string(),
+                            Some(Expression::InitList {
+                                initializers: vec![(
+                                    None,
+                                    Expression::IntConst {
+                                        value: 1,
+                                        location: Location::default(),
+                                    },
+                                )],
+                                location: Location::default(),
+                            }),
+                        )],
+                        location: Location::default(),
+                    },
+                    Statement::Return {
+                        expression: Some(Expression::Index {
+                            expression: Box::new(Expression::Ident {
+                                value: "a".to_string(),
+                                location: Location::default(),
+                            }),
+                            index: Box::new(Expression::IntConst {
+                                value: 0,
+                                location: Location::default(),
+                            }),
+                        }),
+                        location: Location::default(),
+                    },
+                ],
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
 }
