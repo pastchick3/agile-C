@@ -6,7 +6,8 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 
 use crate::structure::{
-    Error, Expression, Function, Locate, Location, Statement, StaticObject, Type, TypeRelationship,
+    Declarator, Error, Expression, Function, Locate, Location, Statement, StaticObject, Type,
+    TypeRelationship,
 };
 
 /// Every symbol will be mapped to a type bound.
@@ -36,10 +37,10 @@ enum Symbol {
 impl Symbol {
     fn get_scope(&self) -> usize {
         match self {
-            Symbol::Variable { scope, .. } => scope.clone(),
-            Symbol::Expression { scope, .. } => scope.clone(),
-            Symbol::Parameter { scope, .. } => scope.clone(),
-            Symbol::Return { scope, .. } => scope.clone(),
+            Symbol::Variable { scope, .. } => *scope,
+            Symbol::Expression { scope, .. } => *scope,
+            Symbol::Parameter { scope, .. } => *scope,
+            Symbol::Return { scope, .. } => *scope,
         }
     }
 
@@ -511,7 +512,7 @@ impl SymbolTable {
                     pointer,
                     location,
                 } => {
-                    let refer = match self.pointer_transformation(refer, pointer) {
+                    let refer = match self.pointer_transformation(refer, *pointer) {
                         Some(refer) => refer,
                         None => {
                             let message = format!("`{}` should be a pointer.", symbol);
@@ -540,7 +541,7 @@ impl SymbolTable {
                 } => {
                     let type_bound = self.get_global_type_bound(refer).unwrap();
                     if let Some(bounded) = &type_bound.bounded {
-                        let bounded = match self.pointer_transformation(bounded, pointer) {
+                        let bounded = match self.pointer_transformation(bounded, *pointer) {
                             Some(bounded) => bounded,
                             None => {
                                 let message = format!("`{}` should be a pointer.", symbol);
@@ -577,7 +578,7 @@ impl SymbolTable {
                     pointer,
                     location,
                 } => {
-                    let refer = match self.pointer_transformation(refer, pointer) {
+                    let refer = match self.pointer_transformation(refer, *pointer) {
                         Some(refer) => refer,
                         None => {
                             let message = format!("`{}` should be a pointer.", symbol);
@@ -606,7 +607,7 @@ impl SymbolTable {
                 } => {
                     let type_bound = self.get_global_type_bound(refer).unwrap();
                     if let Some(bounded) = &type_bound.bounded {
-                        let bounded = match self.pointer_transformation(bounded, pointer) {
+                        let bounded = match self.pointer_transformation(bounded, *pointer) {
                             Some(bounded) => bounded,
                             None => {
                                 let message = format!("`{}` should be a pointer.", symbol);
@@ -766,18 +767,14 @@ impl SymbolTable {
                     errors.push((message, bounded.locate()));
                 }
             }
-            if has_bounded {
-                false
-            } else {
-                true
-            }
+            !has_bounded
         } else {
             // Bound concrete types and reject dummy types.
             match type_ {
                 typ if Type::is_dummy_type(&typ) => false,
                 typ => {
                     type_bound.bounded = Some(typ);
-                    self.update_global_type_bound(symbol.clone(), type_bound.clone());
+                    self.update_global_type_bound(symbol, type_bound);
                     true
                 }
             }
@@ -785,7 +782,7 @@ impl SymbolTable {
     }
 
     /// Perform `pointer` transformation.
-    fn pointer_transformation(&self, type_: &Type, pointer: &Option<bool>) -> Option<Type> {
+    fn pointer_transformation(&self, type_: &Type, pointer: Option<bool>) -> Option<Type> {
         match pointer {
             Some(true) => Some(Type::Pointer {
                 refer: Box::new(type_.clone()),
@@ -1035,7 +1032,7 @@ impl<'a> Resolver<'a> {
         let current_func = self.symbol_table.current_func.clone().unwrap();
         let mut return_symbol = Symbol::Return {
             scope: self.symbol_table.current_scope,
-            function: current_func.clone(),
+            function: current_func,
         };
         let mut return_type_bound = self
             .symbol_table
@@ -1070,7 +1067,7 @@ impl<'a> Resolver<'a> {
                     location: location.clone(),
                 });
                 return_type_bound.lower.push(Bound::Type {
-                    refer: type_void.clone(),
+                    refer: type_void,
                     pointer: None,
                     location: location.clone(),
                 });
@@ -1078,11 +1075,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn analyse_statement_def(
-        &mut self,
-        base_type: &Rc<RefCell<Type>>,
-        declarators: &Vec<(Rc<RefCell<Type>>, String, Option<Expression>)>,
-    ) {
+    fn analyse_statement_def(&mut self, base_type: &Rc<RefCell<Type>>, declarators: &[Declarator]) {
         if let Type::Struct {
             name,
             members,
@@ -1306,7 +1299,7 @@ impl<'a> Resolver<'a> {
     fn analyse_statement_switch(
         &mut self,
         expression: &Expression,
-        branches: &Vec<(Expression, Vec<Statement>)>,
+        branches: &[(Expression, Vec<Statement>)],
         default: &Option<Vec<Statement>>,
     ) {
         match self.analyse_expression(expression) {
@@ -1334,7 +1327,7 @@ impl<'a> Resolver<'a> {
                 self.analyse_expression_intconst(value, location)
             }
             Expression::FloatConst { value, location } => {
-                self.analyse_expression_floatconst(value, location)
+                self.analyse_expression_floatconst(*value, location)
             }
             Expression::CharConst { location, .. } => self.analyse_expression_charconst(location),
             Expression::StrConst { location, .. } => self.analyse_expression_strconst(location),
@@ -1428,7 +1421,7 @@ impl<'a> Resolver<'a> {
 
     fn analyse_expression_floatconst(
         &mut self,
-        value: &f64,
+        value: f64,
         location: &Location,
     ) -> Result<(Symbol, TypeBound), ()> {
         let str_value = format!("{}", value);
@@ -1524,7 +1517,7 @@ impl<'a> Resolver<'a> {
                 // Set `TypeBound::pointer`.
                 let symbol = self.symbol_table.make_expression_symbol(location);
                 let type_bound = TypeBound::squeezed(&Bound::Symbol {
-                    refer: expr_symbol.clone(),
+                    refer: expr_symbol,
                     pointer: Some(true),
                     location: location.clone(),
                 });
@@ -1536,7 +1529,7 @@ impl<'a> Resolver<'a> {
                 // Set `TypeBound::pointer`.
                 let symbol = self.symbol_table.make_expression_symbol(location);
                 let type_bound = TypeBound::squeezed(&Bound::Symbol {
-                    refer: expr_symbol.clone(),
+                    refer: expr_symbol,
                     pointer: Some(false),
                     location: location.clone(),
                 });
@@ -1572,15 +1565,14 @@ impl<'a> Resolver<'a> {
                     location: right.locate(),
                 });
                 self.symbol_table
-                    .update_local_type_bound(left_symbol.clone(), left_type_bound.clone());
+                    .update_local_type_bound(left_symbol, left_type_bound.clone());
                 left_type_bound
             }
             "<" | ">" | "<=" | ">=" | "==" | "!=" | "&&" | "||" => {
                 // Allow any types.
                 // return int.
                 let type_ = Type::Int(None);
-                let type_bound = TypeBound::bounded(&type_);
-                type_bound
+                TypeBound::bounded(&type_)
             }
             "." => {
                 // Allow any types.
@@ -1588,12 +1580,11 @@ impl<'a> Resolver<'a> {
                 let name = if let Expression::Ident { value, .. } = right {
                     value
                 } else {
-                    let message = format!("Struct member should be a string.");
-                    self.push_error(&message, &left.locate());
+                    self.push_error("Struct member should be a string.", &left.locate());
                     return Err(());
                 };
                 let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
-                    refer: left_symbol.clone(),
+                    refer: left_symbol,
                     pointer: None,
                     location: left.locate(),
                 });
@@ -1606,12 +1597,11 @@ impl<'a> Resolver<'a> {
                 let name = if let Expression::Ident { value, .. } = right {
                     value
                 } else {
-                    let message = format!("Struct member should be a string.");
-                    self.push_error(&message, &left.locate());
+                    self.push_error("Struct member should be a string.", &left.locate());
                     return Err(());
                 };
                 let mut type_bound = TypeBound::squeezed(&Bound::Symbol {
-                    refer: left_symbol.clone(),
+                    refer: left_symbol,
                     pointer: None,
                     location: left.locate(),
                 });
@@ -1638,7 +1628,7 @@ impl<'a> Resolver<'a> {
                     .symbol_table
                     .make_expression_symbol(&expression.locate());
                 let type_bound = TypeBound::squeezed(&Bound::Symbol {
-                    refer: expr_symbol.clone(),
+                    refer: expr_symbol,
                     pointer: None,
                     location: expression.locate(),
                 });
@@ -1669,7 +1659,7 @@ impl<'a> Resolver<'a> {
             location: index.locate(),
         });
         self.symbol_table
-            .update_local_type_bound(index_symbol.clone(), index_type_bound.clone());
+            .update_local_type_bound(index_symbol, index_type_bound);
 
         // Require the expression to be a pointer.
         expr_type_bound.upper.push(Bound::Type {
@@ -1688,7 +1678,7 @@ impl<'a> Resolver<'a> {
             .symbol_table
             .make_expression_symbol(&expression.locate());
         let type_bound = TypeBound::squeezed(&Bound::Symbol {
-            refer: expr_symbol.clone(),
+            refer: expr_symbol,
             pointer: Some(false),
             location: expression.locate(),
         });
@@ -1699,7 +1689,7 @@ impl<'a> Resolver<'a> {
     fn analyse_expression_call(
         &mut self,
         expression: &Expression,
-        arguments: &Vec<Expression>,
+        arguments: &[Expression],
     ) -> Result<(Symbol, TypeBound), ()> {
         if let Expression::Ident { value, .. } = expression {
             // Define the function return symbol.
@@ -1773,7 +1763,7 @@ impl<'a> Resolver<'a> {
                 .make_expression_symbol(&expression.locate());
             let mut type_bound = TypeBound::new();
             type_bound.lower.push(Bound::Symbol {
-                refer: return_symbol.clone(),
+                refer: return_symbol,
                 pointer: None,
                 location: expression.locate(),
             });
@@ -1784,7 +1774,7 @@ impl<'a> Resolver<'a> {
             // Require the function name directly available.
             let message = "Require a function name.";
             self.push_error(&message, &expression.locate());
-            return Err(());
+            Err(())
         }
     }
 }
@@ -1808,6 +1798,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1896,6 +1887,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2050,6 +2042,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2187,6 +2180,7 @@ mod tests {
                 location: Some(Location::default()),
             }),
             StaticObject::Function(Box::new(Function {
+                is_proto: false,
                 return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
                 name: "f".to_string(),
                 parameters: IndexMap::new(),
@@ -2337,6 +2331,7 @@ mod tests {
         let expected_errors = vec![];
         let expected_ast = vec![
             StaticObject::Function(Box::new(Function {
+                is_proto: false,
                 return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
                 name: "f".to_string(),
                 parameters: [(
@@ -2360,6 +2355,7 @@ mod tests {
                 location: Location::default(),
             })),
             StaticObject::Function(Box::new(Function {
+                is_proto: false,
                 return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Void(None)))))),
                 name: "m".to_string(),
                 parameters: IndexMap::new(),
@@ -2407,6 +2403,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
             name: "f".to_string(),
             parameters: [(
@@ -2461,6 +2458,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Void(None)))))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2492,47 +2490,53 @@ mod tests {
             }
         ";
         let expected_errors = vec![];
-        let expected_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-            name: "f".to_string(),
-            parameters: [(
-                "a".to_string(),
-                Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
-            )]
-            .iter()
-            .cloned()
-            .collect(),
-            ellipsis: true,
-            body: Statement::Block {
-                statements: Vec::new(),
+        let expected_ast = vec![
+            StaticObject::Function(Box::new(Function {
+                is_proto: false,
+                return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+                name: "f".to_string(),
+                parameters: [(
+                    "a".to_string(),
+                    Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
+                )]
+                .iter()
+                .cloned()
+                .collect(),
+                ellipsis: true,
+                body: Statement::Block {
+                    statements: Vec::new(),
+                    location: Location::default(),
+                },
                 location: Location::default(),
-            },
-            location: Location::default(),
-        })),StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-            name: "m".to_string(),
-            parameters: IndexMap::new(),
-            ellipsis: false,
-            body: Statement::Block {
-                statements: vec![
-                    Statement::Expr(Expression::Call {
+            })),
+            StaticObject::Function(Box::new(Function {
+                is_proto: false,
+                return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+                name: "m".to_string(),
+                parameters: IndexMap::new(),
+                ellipsis: false,
+                body: Statement::Block {
+                    statements: vec![Statement::Expr(Expression::Call {
                         expression: Box::new(Expression::Ident {
                             value: "f".to_string(),
                             location: Location::default(),
                         }),
-                        arguments: vec![Expression::IntConst {
-                            value: 1,
-                            location: Location::default(),
-                        },Expression::IntConst {
-                            value: 2,
-                            location: Location::default(),
-                        }],
-                    }),
-                ],
+                        arguments: vec![
+                            Expression::IntConst {
+                                value: 1,
+                                location: Location::default(),
+                            },
+                            Expression::IntConst {
+                                value: 2,
+                                location: Location::default(),
+                            },
+                        ],
+                    })],
+                    location: Location::default(),
+                },
                 location: Location::default(),
-            },
-            location: Location::default(),
-        }))];
+            })),
+        ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -2554,6 +2558,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::T(Some(Box::new(Type::Byte))))),
             name: "f".to_string(),
             parameters: IndexMap::new(),

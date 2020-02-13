@@ -66,6 +66,7 @@ impl Serializer {
     /// This function will automatically add nothing when done.
     fn serialize_function(&mut self, func: &Function) {
         let Function {
+            is_proto,
             return_type,
             name,
             parameters,
@@ -73,6 +74,12 @@ impl Serializer {
             body,
             ..
         } = func;
+
+        // Do not serialize prototypes for internal usages only.
+        if *is_proto {
+            self.pop_char();
+            return;
+        }
 
         // Serialize the return type.
         self.serialize_type(&return_type.borrow());
@@ -585,8 +592,6 @@ void f(int a, unsigned int b) {}
             }
             
             int m(int a) {
-                #include <_test>
-
                 while (1) {
                     continue;
                 }
@@ -645,7 +650,6 @@ void f(int a, unsigned int b) {}
 }
 
 int m(int a) {
-    #include <_test>
     while (1) {
         continue;
     }

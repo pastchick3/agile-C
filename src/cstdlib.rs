@@ -5,7 +5,7 @@
 /// and type inference.
 pub fn get_library(name: &str) -> Option<&str> {
     match name {
-        "_test" => Some("//"), // for unit test
+        "_test" => Some("void _AGILE_C_F_(void);"), // for unit test
         "assert.h" => Some(ASSERT_H),
         "stdio.h" => Some(STDIO_H),
         _ => None,

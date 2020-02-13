@@ -1,6 +1,8 @@
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{self, Command};
+use std::time::SystemTime;
 
 use colored::*;
 use structopt::StructOpt;
@@ -19,29 +21,30 @@ struct Opt {
     output: PathBuf,
 
     /// Whether to invoke GCC.
-    #[structopt(name="gcc", long)]
+    #[structopt(name = "gcc", long)]
     gcc_flag: bool,
 
     /// Arguments to GCC.
-    #[structopt(name="args", subcommand)]
+    #[structopt(name = "args", subcommand)]
     gcc_args: Option<Args>,
 }
 
 #[derive(Debug, StructOpt)]
 enum Args {
     #[structopt(external_subcommand)]
-    other(Vec<String>),
+    Other(Vec<String>),
 }
 
 fn main() {
     // Process command line arguments.
     let opt = Opt::from_args();
-    println!("{:?}", opt);
+
     // Read the input file as a string.
     let source = fs::read_to_string(&opt.input).unwrap_or_else(|err| {
         eprintln!("{}: {}", "Input File Error".red(), err);
         process::exit(1);
     });
+
     // Extract the file name of the input file.
     // We directly unwrap results because we have succesfully opened the file.
     let file_name = opt.input.file_name().unwrap().to_str().unwrap();
@@ -51,6 +54,7 @@ fn main() {
         eprintln!("{}: {}", "Transpiler Error".red(), err);
         process::exit(1);
     });
+
     // Perform the transpilation.
     let transformed_source = transpiler.run().unwrap_or_else(|err| {
         eprintln!("{}: {}", "Transpilation Error".red(), err);
@@ -58,15 +62,55 @@ fn main() {
     });
 
     if opt.gcc_flag {
-        // Invoke GCC.
-        todo!("invoke gcc with output and args"); 
-        if let Some(args) = opt.gcc_args {
+        // Write the temporary input file and change file names into `String`.
+        let mut temp = env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        temp.push(&format!("_agile_c_temp_{}.c", stamp));
+        fs::write(&temp, &transformed_source).unwrap_or_else(|err| {
+            eprintln!("{}: {}", "Temp File Error".red(), err);
+            process::exit(1);
+        });
+        let temp = temp.into_os_string().into_string().unwrap_or_else(|_| {
+            eprintln!("{}: Invalid Unicode data.", "Temp File Error".red());
+            process::exit(1);
+        });
+        let output = opt
+            .output
+            .into_os_string()
+            .into_string()
+            .unwrap_or_else(|_| {
+                eprintln!("{}: Invalid Unicode data.", "Output File Error".red());
+                process::exit(1);
+            });
 
+        // Assemble arguments to GCC.
+        let args = if let Some(Args::Other(mut args)) = opt.gcc_args {
+            args.remove(0); // Remove "args".
+            args.extend(vec!["-o".to_string(), output, temp.clone()]);
+            args
         } else {
-        Command::new("gcc")
-            .args(&["/C", "echo hello"])
-            .output()
-            .expect("failed to execute process");
+            vec!["-o".to_string(), output, temp.clone()]
+        };
+
+        // Invoke GCC.
+        let status = Command::new("gcc")
+            .args(&args)
+            .status()
+            .unwrap_or_else(|_| {
+                eprintln!("{}: Cannot execute GCC.", "GCC Error".red());
+                process::exit(1);
+            });
+
+        // Clean up.
+        fs::remove_file(&temp).unwrap_or_else(|err| {
+            eprintln!("{}: {}", "Temp File Error".red(), err);
+            process::exit(1);
+        });
+        if !status.success() {
+            process::exit(1);
         }
     } else {
         // Write the output file.

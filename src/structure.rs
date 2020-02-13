@@ -203,7 +203,7 @@ pub enum TypeRelationship {
 /// AST nodes for types.
 ///
 /// Please refer to the README file for the complete type hierarchy.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Any,
     T(Option<Box<Type>>), // whether it has been specialized to a concrete type
@@ -237,6 +237,50 @@ pub enum Type {
     Short(Option<Location>),
     UnsignedShort(Option<Location>),
     Byte,
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        use Type::*;
+
+        match (self, other) {
+            (Any, Any) => true,
+            (T(None), T(None)) => true,
+            (T(Some(left)), T(Some(right))) => left == right,
+            (Void(_), Void(_)) => true,
+            (Char(_), Char(_)) => true,
+            (
+                Struct {
+                    name: l_n,
+                    members: l_mems,
+                    ..
+                },
+                Struct {
+                    name: r_n,
+                    members: r_mems,
+                    ..
+                },
+            ) => l_n == r_n && l_mems == r_mems,
+            (Nothing, Nothing) => true,
+
+            (AnyRef, AnyRef) => true,
+            (Pointer { refer: left, .. }, Pointer { refer: right, .. }) => left == right,
+            (Array { content: left, .. }, Array { content: right, .. }) => left == right,
+            (Null, Null) => true,
+
+            (Double(_), Double(_)) => true,
+            (Float(_), Float(_)) => true,
+            (Long(_), Long(_)) => true,
+            (UnsignedLong(_), UnsignedLong(_)) => true,
+            (Int(_), Int(_)) => true,
+            (UnsignedInt(_), UnsignedInt(_)) => true,
+            (Short(_), Short(_)) => true,
+            (UnsignedShort(_), UnsignedShort(_)) => true,
+            (Byte, Byte) => true,
+
+            _ => false,
+        }
+    }
 }
 
 impl Locate for Type {
@@ -341,7 +385,7 @@ impl Type {
                 let content = Type::specialize_dummy_type(upper, content)?;
                 Some(Type::Array {
                     content: Box::new(content),
-                    length: length.clone(),
+                    length: *length,
                     location: location.clone(),
                 })
             }
@@ -643,6 +687,8 @@ impl Locate for Expression {
     }
 }
 
+pub type Declarator = (Rc<RefCell<Type>>, String, Option<Expression>);
+
 /// AST nodes for statements.
 #[derive(Debug, PartialEq)]
 pub enum Statement {
@@ -664,7 +710,7 @@ pub enum Statement {
     },
     Def {
         base_type: Rc<RefCell<Type>>, // does not contain array/pointer definitions
-        declarators: Vec<(Rc<RefCell<Type>>, String, Option<Expression>)>,
+        declarators: Vec<Declarator>,
         location: Location,
     },
     While {
@@ -721,6 +767,7 @@ impl Locate for Statement {
 /// AST nodes for functions.
 #[derive(Debug, PartialEq)]
 pub struct Function {
+    pub is_proto: bool, // whether it is a prototype for internal usages only
     pub return_type: Rc<RefCell<Type>>,
     pub name: String,
     pub parameters: IndexMap<String, Rc<RefCell<Type>>>,

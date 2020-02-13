@@ -81,7 +81,7 @@ impl<'a> Preprocessor<'a> {
             let included_file_name = caps.get(2).unwrap().as_str();
             let right_delimiter = caps.get(3).unwrap().as_str();
             if left_delimiter == "<" && right_delimiter == ">" {
-                // Include a C standard library.
+                // Include a C standard library with name mangling.
                 // Also notice we do not remove the original line.
                 match cstdlib::get_library(included_file_name) {
                     Some(source) => {
@@ -90,12 +90,18 @@ impl<'a> Preprocessor<'a> {
                         let mut extended: Vec<_> = source
                             .lines()
                             .enumerate()
-                            .map(|(included_line_index, line)| {
-                                (
-                                    included_file_name.to_string(),
-                                    included_line_index,
-                                    line.to_string(),
-                                )
+                            .filter_map(|(included_line_index, line)| {
+                                if line.trim().is_empty() {
+                                    None
+                                } else {
+                                    let mut line_string = String::from("_AGILE_C_PROTO_ ");
+                                    line_string.push_str(line);
+                                    Some((
+                                        included_file_name.to_string(),
+                                        included_line_index,
+                                        line_string,
+                                    ))
+                                }
                             })
                             .collect();
                         lines.append(&mut extended);
@@ -188,7 +194,11 @@ mod tests {
         let expected_errors = vec![];
         let expected_lines = vec![
             ("file".to_string(), 0, "#include <_test>".to_string()),
-            ("_test".to_string(), 0, "//".to_string()),
+            (
+                "_test".to_string(),
+                0,
+                "_AGILE_C_PROTO_ void _AGILE_C_F_(void);".to_string(),
+            ),
         ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)

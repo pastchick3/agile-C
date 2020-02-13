@@ -41,7 +41,7 @@ impl Environment {
 
     // Check whether an identifier has been defined.
     fn is_defined(&self, name: &str) -> bool {
-        self.envs.iter().find(|e| e.contains(name)).is_some()
+        self.envs.iter().any(|e| e.contains(name))
     }
 
     // Define a structure in the current scope.
@@ -107,39 +107,60 @@ impl<'a> Parser<'a> {
     /// Assemble a generic AST from tokens.
     pub fn run(&mut self) -> Result<Vec<StaticObject>, ()> {
         loop {
-            match self.tokens.last() {
-                Some(Token::Struct(_)) => {
-                    let location = self.tokens.pop().unwrap().locate();
-                    match self.parse_type_struct(location) {
-                        Ok(struct_) => {
-                            self.assert_token("Semicolon")?;
-                            self.generic_ast
-                                .as_mut()
-                                .unwrap()
-                                .push(StaticObject::Type(struct_));
-                        }
-                        Err(_) => self.tokens.clear(),
+            match self.tokens.pop() {
+                Some(Token::Struct(location)) => match self.parse_type_struct(location) {
+                    Ok(struct_) => {
+                        self.assert_token("Semicolon")?;
+                        self.generic_ast
+                            .as_mut()
+                            .unwrap()
+                            .push(StaticObject::Type(struct_));
                     }
-                }
+                    Err(_) => self.tokens.clear(),
+                },
                 Some(Token::Include { literal, location }) => {
                     let include = Statement::Include {
-                        content: literal.to_string(),
-                        location: location.clone(),
+                        content: literal,
+                        location,
                     };
                     self.generic_ast
                         .as_mut()
                         .unwrap()
                         .push(StaticObject::Statement(include));
-                    self.tokens.pop();
                 }
-                Some(_) => match self.parse_function() {
-                    Ok(func) => self
-                        .generic_ast
-                        .as_mut()
-                        .unwrap()
-                        .push(StaticObject::Function(Box::new(func))),
-                    Err(_) => self.tokens.clear(),
-                },
+                Some(Token::Ident { literal, location }) => {
+                    if literal == "_AGILE_C_PROTO_" {
+                        match self.parse_function(true) {
+                            Ok(func) => self
+                                .generic_ast
+                                .as_mut()
+                                .unwrap()
+                                .push(StaticObject::Function(Box::new(func))),
+                            Err(_) => self.tokens.clear(),
+                        }
+                    } else {
+                        self.tokens.push(Token::Ident { literal, location });
+                        match self.parse_function(false) {
+                            Ok(func) => self
+                                .generic_ast
+                                .as_mut()
+                                .unwrap()
+                                .push(StaticObject::Function(Box::new(func))),
+                            Err(_) => self.tokens.clear(),
+                        }
+                    }
+                }
+                Some(tk) => {
+                    self.tokens.push(tk);
+                    match self.parse_function(false) {
+                        Ok(func) => self
+                            .generic_ast
+                            .as_mut()
+                            .unwrap()
+                            .push(StaticObject::Function(Box::new(func))),
+                        Err(_) => self.tokens.clear(),
+                    }
+                }
                 None => {
                     if self.errors.is_empty() {
                         return Ok(self.generic_ast.take().unwrap());
@@ -235,7 +256,7 @@ impl<'a> Parser<'a> {
         });
     }
 
-    fn parse_function(&mut self) -> Result<Function, ()> {
+    fn parse_function(&mut self, is_proto: bool) -> Result<Function, ()> {
         // Enter a new scope.
         self.environment.enter();
 
@@ -312,7 +333,14 @@ impl<'a> Parser<'a> {
                             break;
                         }
                         // Parse an normal parameter.
-                        let type_ = self.parse_type()?;
+                        let mut type_ = self.parse_type()?;
+                        if let Some(Token::Asterisk(_)) = self.tokens.last() {
+                            let location = self.tokens.pop().unwrap().locate();
+                            type_ = Type::Pointer {
+                                refer: Box::new(type_),
+                                location: Some(location),
+                            };
+                        }
                         let (name, location) = match self.tokens.pop() {
                             Some(Token::Ident { literal, location }) => {
                                 self.environment.define(&literal);
@@ -360,6 +388,7 @@ impl<'a> Parser<'a> {
 
         // Return the function node.
         Ok(Function {
+            is_proto,
             return_type: Rc::new(RefCell::new(return_type)),
             name,
             parameters,
@@ -529,7 +558,7 @@ impl<'a> Parser<'a> {
 
             Some(Token::Include { literal, location }) => Ok(Statement::Include {
                 content: literal,
-                location: location,
+                location,
             }),
 
             Some(tk) => {
@@ -1281,10 +1310,21 @@ mod tests {
     fn include() {
         let source = "#include <_test>";
         let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Statement(Statement::Include {
-            content: "#include <_test>".to_string(),
-            location: Location::default(),
-        })];
+        let expected_generic_ast = vec![
+            StaticObject::Statement(Statement::Include {
+                content: "#include <_test>".to_string(),
+                location: Location::default(),
+            }),
+            StaticObject::Function(Box::new(Function {
+                is_proto: true,
+                return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+                name: "_AGILE_C_F_".to_string(),
+                parameters: IndexMap::new(),
+                ellipsis: false,
+                body: Statement::Null(Location::default()),
+                location: Location::default(),
+            })),
+        ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
             .run()
@@ -1300,6 +1340,7 @@ mod tests {
         let source = "int *f(void) {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Pointer {
                 refer: Box::new(Type::Int(Some(Location::default()))),
                 location: Some(Location::default()),
@@ -1328,6 +1369,7 @@ mod tests {
         let source = "void f() {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1353,6 +1395,7 @@ mod tests {
         let source = "void f(void) {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1378,6 +1421,7 @@ mod tests {
         let source = "void f(...) {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1403,6 +1447,7 @@ mod tests {
         let source = "void f(int a) {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: [(
@@ -1434,6 +1479,7 @@ mod tests {
         let source = "void f(int a, int b, ...) {}";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: [
@@ -1491,6 +1537,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1516,6 +1563,7 @@ mod tests {
         let source = "void f(void) { continue; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1541,6 +1589,7 @@ mod tests {
         let source = "void f(void) { break; }";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1571,6 +1620,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1604,36 +1654,6 @@ mod tests {
     }
 
     #[test]
-    fn statement_include() {
-        let source = "void f(void) {
-            #include <_test>
-        }";
-        let expected_errors = vec![];
-        let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
-            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
-            name: "f".to_string(),
-            parameters: IndexMap::new(),
-            ellipsis: false,
-            body: Statement::Block {
-                statements: vec![Statement::Include {
-                    content: "#include <_test>".to_string(),
-                    location: Location::default(),
-                }],
-                location: Location::default(),
-            },
-            location: Location::default(),
-        }))];
-        let mut errors = Vec::new();
-        let lines = Preprocessor::new("file", source, &mut errors)
-            .run()
-            .unwrap();
-        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
-        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
-        assert_eq!(errors, expected_errors);
-        assert_eq!(generic_ast, expected_generic_ast);
-    }
-
-    #[test]
     fn statement_def_var() {
         let source = "
             void f(void) {
@@ -1650,6 +1670,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1856,6 +1877,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -1982,6 +2004,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2033,6 +2056,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2069,6 +2093,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2107,6 +2132,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: [(
@@ -2204,6 +2230,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2259,6 +2286,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2332,6 +2360,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2382,6 +2411,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2473,6 +2503,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2565,6 +2596,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2634,6 +2666,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
             name: "f".to_string(),
             parameters: IndexMap::new(),
@@ -2732,6 +2765,7 @@ mod tests {
         ";
         let expected_errors = vec![];
         let expected_generic_ast = vec![StaticObject::Function(Box::new(Function {
+            is_proto: false,
             return_type: Rc::new(RefCell::new(Type::T(None))),
             name: "f".to_string(),
             parameters: [("a".to_string(), Rc::new(RefCell::new(Type::T(None))))]

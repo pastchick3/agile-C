@@ -612,10 +612,19 @@ mod tests {
                 literal: "#include <_test>".to_string(),
                 location: Location::default(),
             },
-            Comment {
-                literal: "//".to_string(),
+            Ident {
+                literal: "_AGILE_C_PROTO_".to_string(),
                 location: Location::default(),
             },
+            Void(Location::default()),
+            Ident {
+                literal: "_AGILE_C_F_".to_string(),
+                location: Location::default(),
+            },
+            LParen(Location::default()),
+            Void(Location::default()),
+            RParen(Location::default()),
+            Semicolon(Location::default()),
         ];
         let mut errors = Vec::new();
         let lines = Preprocessor::new("file", source, &mut errors)
