@@ -204,6 +204,7 @@ struct SymbolTable {
     current_scope: usize,
     func_returns: HashMap<String, TypeBound>,
     func_params: HashMap<String, IndexMap<String, TypeBound>>,
+    func_ellipsis: HashMap<String, bool>,
     scopes: Vec<Scope>,
 }
 
@@ -214,6 +215,7 @@ impl SymbolTable {
             current_scope: 0,
             func_returns: HashMap::new(),
             func_params: HashMap::new(),
+            func_ellipsis: HashMap::new(),
             scopes: vec![Scope::new(0, None)],
         }
     }
@@ -269,6 +271,7 @@ impl SymbolTable {
             return_type,
             name,
             parameters,
+            ellipsis,
             ..
         } = function;
         self.func_returns
@@ -278,6 +281,7 @@ impl SymbolTable {
             .map(|(param, type_)| (param.clone(), TypeBound::wrapped(type_)))
             .collect();
         self.func_params.insert(name.clone(), parameters);
+        self.func_ellipsis.insert(name.clone(), *ellipsis);
     }
 
     /// Define a symbol in the current scope.
@@ -1714,7 +1718,7 @@ impl<'a> Resolver<'a> {
             self.symbol_table
                 .define_symbol(&return_symbol, &return_type_bound);
 
-            // Constrain arguments and parameters.
+            // Get defined parameters and the ellipsis.
             let params = match self.symbol_table.func_params.get(value) {
                 Some(params) => params.clone(),
                 None => {
@@ -1723,11 +1727,23 @@ impl<'a> Resolver<'a> {
                     return Err(());
                 }
             };
-            if arguments.len() != params.len() {
+            let ellipsis = match self.symbol_table.func_ellipsis.get(value) {
+                Some(ellipsis) => ellipsis,
+                None => {
+                    let message = format!("Undefined function `{}`.", value);
+                    self.push_error(&message, &expression.locate());
+                    return Err(());
+                }
+            };
+
+            // Check for the number of parameters.
+            if !ellipsis && arguments.len() != params.len() {
                 let message = "Unequal lengths of arguments and parameters.";
                 self.push_error(&message, &expression.locate());
                 return Err(());
             }
+
+            // Constrain arguments and parameters.
             for (arg, (param, mut param_type_bound)) in arguments.iter().zip(params.into_iter()) {
                 let (arg_symbol, mut arg_type_bound) = self.analyse_expression(arg)?;
                 let param_symbol = Symbol::Parameter {
@@ -2451,6 +2467,68 @@ mod tests {
             ellipsis: false,
             body: Statement::Block {
                 statements: Vec::new(),
+                location: Location::default(),
+            },
+            location: Location::default(),
+        }))];
+        let mut errors = Vec::new();
+        let lines = Preprocessor::new("file", source, &mut errors)
+            .run()
+            .unwrap();
+        let tokens = Lexer::new(lines, &mut errors).run().unwrap();
+        let generic_ast = Parser::new(tokens, &mut errors).run().unwrap();
+        let ast = Resolver::new(generic_ast, &mut errors).run().unwrap();
+        assert_eq!(errors, expected_errors);
+        assert_eq!(ast, expected_ast);
+    }
+
+    #[test]
+    fn ellipsis() {
+        let source = "
+            void f(int a, ...) {}
+
+            void m(void) {
+                f(1, 2);
+            }
+        ";
+        let expected_errors = vec![];
+        let expected_ast = vec![StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "f".to_string(),
+            parameters: [(
+                "a".to_string(),
+                Rc::new(RefCell::new(Type::Int(Some(Location::default())))),
+            )]
+            .iter()
+            .cloned()
+            .collect(),
+            ellipsis: true,
+            body: Statement::Block {
+                statements: Vec::new(),
+                location: Location::default(),
+            },
+            location: Location::default(),
+        })),StaticObject::Function(Box::new(Function {
+            return_type: Rc::new(RefCell::new(Type::Void(Some(Location::default())))),
+            name: "m".to_string(),
+            parameters: IndexMap::new(),
+            ellipsis: false,
+            body: Statement::Block {
+                statements: vec![
+                    Statement::Expr(Expression::Call {
+                        expression: Box::new(Expression::Ident {
+                            value: "f".to_string(),
+                            location: Location::default(),
+                        }),
+                        arguments: vec![Expression::IntConst {
+                            value: 1,
+                            location: Location::default(),
+                        },Expression::IntConst {
+                            value: 2,
+                            location: Location::default(),
+                        }],
+                    }),
+                ],
                 location: Location::default(),
             },
             location: Location::default(),
