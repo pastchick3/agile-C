@@ -1,6 +1,84 @@
-# Agile C
+# Agile-C
 
-A Type Inference Transpiler for C Programming Language
+A Type Inference Transpiler for the C Programming Language
+
+## Motivation
+
+Type inference now is an important feature for modern programming languages. You can find it from the famous global inference in Haskell, local inference in Rust and Scala, and limited form in old language like C++ and Java. There is no doubt a smart type inference system can reduce the cognitive load of programmers while not giving up the benefits of strongly staticly type systems.
+
+However, although the general idea of type inference, type unification, is quite straightforaward and concise, there is a large gap between the theory and a really working type inference system. What's worse, it is not easy to find something like "Write your a type inference engine in 21 days" that is accessable while practical for common programmers who have no expertise in programming language design and type systems to get a feeling about the principle of type inference.
+
+Agile-C is my bachelar graduation project, which provides basic type inference for most commen used C features. This project is practice for me before I read more serious literature about programming language design and type systems. This porject is intended to ONLY educational purpose.
+
+## Introduction
+
+Agile-C is a transpiler, which consumes a C sourse file that omits certain type declarations and outputs a valid C sourse file. You can also invoke GCC from Agile-C directly and get a executable file directly.
+
+Following sections are divided into three parts: First, we will walk you through "Getting Started" section to show you how Agile-C works in action; Then, we will talk about some basic knowledge about type systems; Finally, we will talks about the implementation details of Agile-C and also its formal syntax.
+
+---
+
+## Getting Started
+
+### Installing
+
+Agile-C is written in pure Rust and distributed as a single executable file available in the root directory of the project named "agile_c.exe".
+
+### Usage
+
+1. Hello, world!
+
+In whatever folder you like, create `test.c` and type the following C code.
+
+```C
+#include <stdio.h>
+
+int main(void) {
+    printf("Hello, world!");
+    return 0;
+}
+```
+
+Then open the terminal and type the following command.
+
+```
+$ ./agile_c.exe --gcc -i ./test.c -o ./test.exe
+```
+
+`--gcc` tells the Agile-C to invoke GCC for you (notice you should have GCC installed and can be directly invoked from the command line with `gcc` command). `-i` or `--input` specifies the path to the input file, while `-o` or `--output` specifies the path to the output file. Now you should see a new executable file named `test.exe` appears in this folder. Now try to run it.
+
+```
+$ ./test.exe
+```
+
+Now you should find "Hello, world!" appears in your screen.
+
+2. Invoke GCC with more arguments
+
+You can provide more arguments to GCC by using `args` subcommand. For example, the following command will print the version information of GCC.
+
+```
+./agile_c.exe --gcc -i ./test.c -o ./test.exe args --version
+```
+
+3. Basic C features
+
+Agile-C supports the most commonly used features of C. Change `test.c` to the following and recompile it to see what you get!
+
+```
+
+
+---
+
+## Type Inference
+
+---
+
+## Module Structure
+
+## Grammer
+
+
 
 ## Introduction
 

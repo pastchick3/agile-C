@@ -491,6 +491,11 @@ impl SymbolTable {
         mut type_bound: TypeBound,
         errors: &mut Vec<(String, Location)>,
     ) -> bool {
+        // if let Symbol::Expression {location, ..} = &symbol {
+        //     if location.line_no == 8 && location.char_no == 5 {
+        //         println!("in {} - {:#?}", symbol, type_bound);
+        //     }
+        // }
         // Check for the bounded/wrapped type.
         let mut has_bounded = true;
         if type_bound.bounded.is_none() {
@@ -1752,7 +1757,7 @@ impl<'a> Resolver<'a> {
                     location: arg.locate(),
                 });
                 self.symbol_table
-                    .define_symbol(&arg_symbol, &arg_type_bound);
+                    .update_local_type_bound(arg_symbol, arg_type_bound);
                 self.symbol_table
                     .define_symbol(&param_symbol, &param_type_bound);
             }
