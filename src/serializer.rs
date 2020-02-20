@@ -1,8 +1,44 @@
+use std::collections::HashSet;
+
 use crate::structure::{Expression, Function, Statement, StaticObject, Type};
+
+/// A structure containg names of structures defined in different scopes.
+struct Environment {
+    structs: Vec<HashSet<String>>,
+}
+
+impl Environment {
+    fn new() -> Self {
+        Environment {
+            structs: vec![HashSet::new()],
+        }
+    }
+
+    // Enter a new scope.
+    fn enter(&mut self) {
+        self.structs.push(HashSet::new());
+    }
+
+    // Leave the current scope.
+    fn leave(&mut self) {
+        self.structs.pop();
+    }
+
+    // Define a struct in the current scope.
+    fn define(&mut self, name: &str) {
+        self.structs.last_mut().unwrap().insert(name.to_string());
+    }
+
+    // Check whether a struct has been defined.
+    fn is_defined(&self, name: &str) -> bool {
+        self.structs.iter().any(|e| e.contains(name))
+    }
+}
 
 pub struct Serializer {
     ast: Option<Vec<StaticObject>>,
     transformed_source: Option<String>,
+    environment: Environment,
     ident_level: usize,
 }
 
@@ -12,6 +48,7 @@ impl Serializer {
         Serializer {
             ast: Some(ast),
             transformed_source: Some(String::new()),
+            environment: Environment::new(),
             ident_level: 0,
         }
     }
@@ -132,21 +169,24 @@ impl Serializer {
             Type::Struct { name, members, .. } => {
                 self.push_str_space("struct");
                 self.push_str_space(name);
-                if members.is_empty() {
-                    self.push_str_space("{}");
-                } else {
-                    self.push_str_newline("{");
-                    self.ident_level += 1;
-                    for (member, type_) in members {
+                if !self.environment.is_defined(name) {
+                    self.environment.define(name);
+                    if members.is_empty() {
+                        self.push_str_space("{}");
+                    } else {
+                        self.push_str_newline("{");
+                        self.ident_level += 1;
+                        for (member, type_) in members {
+                            self.push_str(&" ".repeat(self.ident_level * 4));
+                            self.serialize_type(type_);
+                            self.push_str_space(member);
+                            self.pop_char();
+                            self.push_str_newline(";")
+                        }
+                        self.ident_level -= 1;
                         self.push_str(&" ".repeat(self.ident_level * 4));
-                        self.serialize_type(type_);
-                        self.push_str_space(member);
-                        self.pop_char();
-                        self.push_str_newline(";")
+                        self.push_str_space("}");
                     }
-                    self.ident_level -= 1;
-                    self.push_str(&" ".repeat(self.ident_level * 4));
-                    self.push_str_space("}");
                 }
             }
             typ => panic!("Try to serialize a dummy type `{}`.", typ),
@@ -218,6 +258,7 @@ impl Serializer {
                 None => self.push_str_newline("return;"),
             },
             Statement::Block { statements, .. } => {
+                self.environment.enter();
                 if statements.is_empty() {
                     self.push_str_newline("{}");
                 } else {
@@ -230,6 +271,7 @@ impl Serializer {
                     self.push_str(&" ".repeat(self.ident_level * 4));
                     self.push_str_newline("}");
                 }
+                self.environment.leave();
             }
             Statement::Def {
                 base_type,
@@ -559,7 +601,6 @@ void f(int a, unsigned int b) {}
 
     #[test]
     fn statement() {
-        // Notice `struct A` (a2) will be expanded.
         let source = "
             void f() {
                 {
@@ -645,7 +686,7 @@ void f(int a, unsigned int b) {}
         int a;
         float b;
     } c1 = { .a = 1, .b = 2 };
-    struct A {} a2;
+    struct A a2;
     return;
 }
 
@@ -722,9 +763,7 @@ void f(int a) {
     int arr[] = { 1 };
     arr[0];
     f(1);
-    struct S {
-        int mem;
-    } var, *ptr;
+    struct S var, *ptr;
     var.mem;
     ptr->mem;
 }

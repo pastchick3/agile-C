@@ -491,11 +491,6 @@ impl SymbolTable {
         mut type_bound: TypeBound,
         errors: &mut Vec<(String, Location)>,
     ) -> bool {
-        // if let Symbol::Expression {location, ..} = &symbol {
-        //     if location.line_no == 8 && location.char_no == 5 {
-        //         println!("in {} - {:#?}", symbol, type_bound);
-        //     }
-        // }
         // Check for the bounded/wrapped type.
         let mut has_bounded = true;
         if type_bound.bounded.is_none() {
@@ -510,134 +505,14 @@ impl SymbolTable {
 
         // Unify upper bounds.
         let mut upper = Type::Any;
-        for bound in type_bound.upper.iter_mut() {
-            match bound {
-                Bound::Type {
-                    refer,
-                    pointer,
-                    location,
-                } => {
-                    let refer = match self.pointer_transformation(refer, *pointer) {
-                        Some(refer) => refer,
-                        None => {
-                            let message = format!("`{}` should be a pointer.", symbol);
-                            errors.push((message, Location::default()));
-                            return false;
-                        }
-                    };
-                    upper = match Type::compare_types(&upper, &refer) {
-                        TypeRelationship::Sub => upper,
-                        TypeRelationship::Equal => upper,
-                        TypeRelationship::Super => refer.clone(),
-                        TypeRelationship::Invalid => {
-                            let message = format!(
-                                "Incompatible types `{}` and `{}` for `{}`.",
-                                upper, refer, symbol
-                            );
-                            errors.push((message, location.clone()));
-                            return false;
-                        }
-                    };
-                }
-                Bound::Symbol {
-                    refer,
-                    pointer,
-                    location,
-                } => {
-                    let type_bound = self.get_global_type_bound(refer).unwrap();
-                    if let Some(bounded) = &type_bound.bounded {
-                        let bounded = match self.pointer_transformation(bounded, *pointer) {
-                            Some(bounded) => bounded,
-                            None => {
-                                let message = format!("`{}` should be a pointer.", symbol);
-                                errors.push((message, Location::default()));
-                                return false;
-                            }
-                        };
-                        upper = match Type::compare_types(&upper, &bounded) {
-                            TypeRelationship::Sub => upper,
-                            TypeRelationship::Equal => upper,
-                            TypeRelationship::Super => bounded.clone(),
-                            TypeRelationship::Invalid => {
-                                let message = format!(
-                                    "Incompatible types `{}` and `{}` for `{}`.",
-                                    upper, bounded, symbol
-                                );
-                                errors.push((message, location.clone()));
-                                return false;
-                            }
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-            }
+        if !self.unify_bounds(&mut upper, &symbol, &mut type_bound, true, errors) {
+            return false;
         }
 
         // Unify lower bounds.
         let mut lower = Type::Nothing;
-        for bound in type_bound.lower.iter_mut() {
-            match bound {
-                Bound::Type {
-                    refer,
-                    pointer,
-                    location,
-                } => {
-                    let refer = match self.pointer_transformation(refer, *pointer) {
-                        Some(refer) => refer,
-                        None => {
-                            let message = format!("`{}` should be a pointer.", symbol);
-                            errors.push((message, Location::default()));
-                            return false;
-                        }
-                    };
-                    lower = match Type::compare_types(&lower, &refer) {
-                        TypeRelationship::Sub => refer.clone(),
-                        TypeRelationship::Equal => lower,
-                        TypeRelationship::Super => lower,
-                        TypeRelationship::Invalid => {
-                            let message = format!(
-                                "Incompatible types `{}` and `{}` for `{}`.",
-                                lower, refer, symbol
-                            );
-                            errors.push((message, location.clone()));
-                            return false;
-                        }
-                    };
-                }
-                Bound::Symbol {
-                    refer,
-                    pointer,
-                    location,
-                } => {
-                    let type_bound = self.get_global_type_bound(refer).unwrap();
-                    if let Some(bounded) = &type_bound.bounded {
-                        let bounded = match self.pointer_transformation(bounded, *pointer) {
-                            Some(bounded) => bounded,
-                            None => {
-                                let message = format!("`{}` should be a pointer.", symbol);
-                                errors.push((message, Location::default()));
-                                return false;
-                            }
-                        };
-                        lower = match Type::compare_types(&lower, &bounded) {
-                            TypeRelationship::Sub => bounded.clone(),
-                            TypeRelationship::Equal => lower,
-                            TypeRelationship::Super => lower,
-                            TypeRelationship::Invalid => {
-                                let message = format!(
-                                    "Incompatible types `{}` and `{}` for `{}`.",
-                                    lower, bounded, symbol
-                                );
-                                errors.push((message, location.clone()));
-                                return false;
-                            }
-                        };
-                    } else {
-                        return false;
-                    }
-                }
-            }
+        if !self.unify_bounds(&mut lower, &symbol, &mut type_bound, false, errors) {
+            return false;
         }
 
         // Unify `infix`.
@@ -704,54 +579,6 @@ impl SymbolTable {
             }
         };
 
-        // Perform `member` transformation.
-        if let Some(member) = &type_bound.member {
-            if let Type::Struct { members, .. } = type_ {
-                type_ = match members.get(member) {
-                    Some(typ) => typ.clone(),
-                    None => {
-                        let message = format!(
-                            "`{}` is not a valid member for structure `{}`.",
-                            member, symbol
-                        );
-                        errors.push((message, Location::default()));
-                        return false;
-                    }
-                }
-            } else {
-                let message = format!("`{}` should be a structure.", symbol);
-                errors.push((message, Location::default()));
-                return false;
-            }
-        }
-
-        // Perform `ptr_mem` transformation.
-        if let Some(member) = &type_bound.ptr_mem {
-            if let Type::Pointer { refer, .. } = type_ {
-                if let Type::Struct { members, .. } = *refer {
-                    type_ = match members.get(member) {
-                        Some(typ) => typ.clone(),
-                        None => {
-                            let message = format!(
-                                "`{}` is not a valid member for structure `{}`.",
-                                member, symbol
-                            );
-                            errors.push((message, Location::default()));
-                            return false;
-                        }
-                    }
-                } else {
-                    let message = format!("`{}` should be a pointer to a structure.", symbol);
-                    errors.push((message, Location::default()));
-                    return false;
-                }
-            } else {
-                let message = format!("`{}` should be a pointer to a structure.", symbol);
-                errors.push((message, Location::default()));
-                return false;
-            }
-        }
-
         // Unify `type_` and `type_bound.bounded`.
         if let Some(bounded) = &type_bound.bounded {
             match Type::compare_types(&type_, bounded) {
@@ -786,6 +613,152 @@ impl SymbolTable {
         }
     }
 
+    /// Unify one side of type bounds.
+    fn unify_bounds(
+        &self,
+        type_: &mut Type,
+        symbol: &Symbol,
+        type_bound: &mut TypeBound,
+        upper: bool,
+        errors: &mut Vec<(String, Location)>,
+    ) -> bool {
+        let bounds = if upper {
+            type_bound.upper.iter_mut()
+        } else {
+            type_bound.lower.iter_mut()
+        };
+        for bound in bounds {
+            match bound {
+                Bound::Type {
+                    refer,
+                    pointer,
+                    location,
+                } => {
+                    // Perform `pointer` transformation.
+                    let mut refer = match self.pointer_transformation(refer, *pointer) {
+                        Some(refer) => refer,
+                        None => {
+                            let message = format!("`{}` should be a pointer.", symbol);
+                            errors.push((message, Location::default()));
+                            return false;
+                        }
+                    };
+
+                    // Perform `member` transformation.
+                    if let Some(member) = &type_bound.member {
+                        match self.member_transformation(&symbol, &mut refer, member) {
+                            Ok(_) => (),
+                            Err(message) => {
+                                errors.push((message, Location::default()));
+                                return false;
+                            }
+                        }
+                    }
+
+                    // Perform `ptr_mem` transformation.
+                    if let Some(member) = &type_bound.ptr_mem {
+                        match self.ptr_mem_transformation(&symbol, &mut refer, member) {
+                            Ok(_) => (),
+                            Err(message) => {
+                                errors.push((message, Location::default()));
+                                return false;
+                            }
+                        }
+                    }
+
+                    // Unify with `type_`.
+                    match Type::compare_types(type_, &refer) {
+                        TypeRelationship::Sub => {
+                            if !upper {
+                                *type_ = refer.clone();
+                            }
+                        }
+                        TypeRelationship::Equal => (),
+                        TypeRelationship::Super => {
+                            if upper {
+                                *type_ = refer.clone();
+                            }
+                        }
+                        TypeRelationship::Invalid => {
+                            let message = format!(
+                                "Incompatible types `{}` and `{}` for `{}`.",
+                                type_, refer, symbol
+                            );
+                            errors.push((message, location.clone()));
+                            return false;
+                        }
+                    };
+                }
+                Bound::Symbol {
+                    refer,
+                    pointer,
+                    location,
+                } => {
+                    let refer_type_bound = self.get_global_type_bound(refer).unwrap();
+                    if let Some(bounded) = &refer_type_bound.bounded {
+                        // Perform `pointer` transformation.
+                        let mut bounded = match self.pointer_transformation(bounded, *pointer) {
+                            Some(bounded) => bounded,
+                            None => {
+                                let message = format!("`{}` should be a pointer.", symbol);
+                                errors.push((message, Location::default()));
+                                return false;
+                            }
+                        };
+
+                        // Perform `member` transformation.
+                        if let Some(member) = &type_bound.member {
+                            match self.member_transformation(&symbol, &mut bounded, member) {
+                                Ok(_) => (),
+                                Err(message) => {
+                                    errors.push((message, Location::default()));
+                                    return false;
+                                }
+                            }
+                        }
+
+                        // Perform `ptr_mem` transformation.
+                        if let Some(member) = &type_bound.ptr_mem {
+                            match self.ptr_mem_transformation(&symbol, &mut bounded, member) {
+                                Ok(_) => (),
+                                Err(message) => {
+                                    errors.push((message, Location::default()));
+                                    return false;
+                                }
+                            }
+                        }
+
+                        // Unify with `type_`.
+                        match Type::compare_types(type_, &bounded) {
+                            TypeRelationship::Sub => {
+                                if !upper {
+                                    *type_ = bounded.clone();
+                                }
+                            }
+                            TypeRelationship::Equal => (),
+                            TypeRelationship::Super => {
+                                if upper {
+                                    *type_ = bounded.clone();
+                                }
+                            }
+                            TypeRelationship::Invalid => {
+                                let message = format!(
+                                    "Incompatible types `{}` and `{}` for `{}`.",
+                                    type_, bounded, symbol
+                                );
+                                errors.push((message, location.clone()));
+                                return false;
+                            }
+                        };
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// Perform `pointer` transformation.
     fn pointer_transformation(&self, type_: &Type, pointer: Option<bool>) -> Option<Type> {
         match pointer {
@@ -799,6 +772,56 @@ impl SymbolTable {
                 _ => None,
             },
             None => Some(type_.clone()),
+        }
+    }
+
+    /// Perform `member` transformation.
+    fn member_transformation(
+        &self,
+        symbol: &Symbol,
+        type_: &mut Type,
+        member: &str,
+    ) -> Result<(), String> {
+        if let Type::Struct { members, .. } = type_ {
+            match members.get(member) {
+                Some(typ) => {
+                    *type_ = typ.clone();
+                    Ok(())
+                }
+                None => Err(format!(
+                    "`{}` is not a valid member for structure `{}`.",
+                    member, symbol
+                )),
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Perform `ptr_mem` transformation.
+    fn ptr_mem_transformation(
+        &self,
+        symbol: &Symbol,
+        type_: &mut Type,
+        member: &str,
+    ) -> Result<(), String> {
+        if let Type::Pointer { refer, .. } = type_ {
+            if let Type::Struct { members, .. } = &**refer {
+                match members.get(member) {
+                    Some(typ) => {
+                        *type_ = typ.clone();
+                        Ok(())
+                    }
+                    None => Err(format!(
+                        "`{}` is not a valid member for structure `{}`.",
+                        member, symbol
+                    )),
+                }
+            } else {
+                Err(format!("`{}` should be a pointer to a structure.", symbol))
+            }
+        } else {
+            Ok(())
         }
     }
 

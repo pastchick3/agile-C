@@ -76,6 +76,11 @@ Agile-C supports the most commonly used features of C. Change `test.c` to the fo
 
 ## Module Structure
 
+## Caution
+int size
+C: same definition, different type
+agile_c: same name, later one will overwrite
+
 ## Grammer
 
 
