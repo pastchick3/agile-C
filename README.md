@@ -16,7 +16,6 @@ Agile-C is a transpiler, which consumes a C sourse file that omits certain type 
 
 Following sections are divided into three parts: First, we will walk you through "Getting Started" section to show you how Agile-C works in action; Then, we will talk about some basic knowledge about type systems; Finally, we will talks about the implementation details of Agile-C and also its formal syntax.
 
----
 
 ## Getting Started
 
@@ -108,7 +107,6 @@ main() {
 }
 ```
 
----
 ## Features
 
 The formal syntax, type hierarchy, and some notes related to the implementation details are given in the last [Specification](#Specification). Here we just quickly go through what Agile-C is capable of, and a few quirks you are likly to run into.
@@ -121,8 +119,8 @@ The formal syntax, type hierarchy, and some notes related to the implementation 
 - Functions are supported.
 - For macros, only `#include` is supported.
 
----
-## Type Inference
+
+## Overview of the Type System of Agile-C
 
 In short, the language Agile-C is a weakly and statically typed subset of C, with a class-based type inference system.
 
@@ -134,26 +132,46 @@ Finally, a class-based is borrowed from termilogies used to discuss how a OOP la
 
 So what does a "class-based type inference system" means. Let's look at a example. For instance, there is a expression `a + b`, then you know variable `a` and `b` should support the operator `+`. For a class-based system, this means "`a` and `b` should belongs to a set of classes that support the `+` operator". For C, this generally means all numerical types (remember we do not have operator overloading in C). Then, how do we represent "a type that is numerical" in a type hierarchy? A simple answer is to define a common bottom subtype of all numerical types and a common supertype of all numerical types. This is exactly the approch Agile-C takes: Agile-C uses `double` as the common super type, and defines a new type `byte` as the common numerical subtype. So `a + b` is translated to constraint "`a` and `b` should be a type that is the supertype of `byte` but subtype of `double`". For trait-based system, `a + b` simply means `a` and `b` should satisfy certain trait, let say `Add`. Now we can see, trait-based approach is much cleaner, without intervining with dedicate type hierarchy and operator overloading. However, Agile-C still takes the class-based approach because C has no notion of traits, so we have to define traits and implements from scrach.
 
----
+![type hierarchy](./type_hierarchy.jpg)
 
 
 
-## Specification
+## How Agile-C Works
 
-Agile C mainly consists of 5 components listed as below:
+Type inference is in essential an automatic detection of the data type of expressions and variables given some context information including literals whose types are trivially known, variables whose types are known, and constraints imposed by language semantics.
 
-| Module | Source | Functionality |
-| --- | --- | --- |
-| Structure | src/structure.rs | Define all data structures including `Token`, `Expression`, etc. |
-| Preprocessor | src/preprocessor.rs | Recursively `include` all required source files |
-| Lexer | src/lexer.rs| Transform the source file into a token stream. |
-| Parser | src/parser.rs| Parse the token stream into AST. Add dummy type parameters if necessary. |
-| Resolver | src/resolver.rs| Resolve dummy type parameters to concrete types. Also perform basic type checking. |
-| Serializer | src/serializer.rs| Serialize the AST into a string. |
+Now, we will walk through the whole process of how Agile-C works with a few examples.
 
-## Parsing
+1. Preprocessing
 
-Agile C uses a Pratt parser (operator-precedence parser), which associates semantics with tokens instead of grammer rules, with small tweaks on how it parses potentially missing type specifiers.
+Suppose we have a really simple program below. The first thing Agile-C will do is to consult a internal module to get complete function declaration of `assert.h` and insert it into the source file, so we can later match the usage of `assert` to its declaration. The transformed program is shown below.
+
+```C
+#include <assert.h>
+
+main() {
+    m = 1;
+    assert(m);
+    return 0;
+}
+```
+
+```C
+#include <assert.h>
+void assert(int expression);
+
+main() {
+    m = 1;
+    assert(m);
+    return 0;
+}
+```
+
+2. Lexing and Parsing
+
+Lexing is a really simple task and we will just skip it.
+
+As parsing, Agile C uses a Pratt parser (operator-precedence parser), which associates semantics with tokens instead of grammer rules, with small tweaks on how it parses potentially missing type specifiers.
 
 Now agile C can complete missing type specifiers in three places: the return type of a function, types for function parameters, and types for variable definitions.
 
@@ -161,107 +179,138 @@ For functions' return types and parameters, generally the parser knows there sho
 
 For variable definitions, the parser will maintain a environment object for each scope, which is a hash set containing name of variables defined in the current scope. When the parser produces a assignment expression, it will search those environment objects, and if the variable being assigned is not defined yet, the parser will transform this assignment expression into a definition statement with a dummy type specifier `T`.
 
-## Resolving
+The transformed program is shown below. The parser add `T` type for return type of `main` and variable `m`. We will see how the parser handle function parameter in a later example.
 
-![type hierarchy](./type_hierarchy.jpg)
+```C
+#include <assert.h>
+void assert(int expression);
 
-Type inference is in essential an automatic detection of the data type of expressions and variables given some context information including literals whose types are trivially known, variables whose types are known, and constraints imposed by language semantics.
-
-To record and utilize these known type information, Agile C implements a structure called  `SymbolTable` whose definition is given below.
-
-``` rust
-struct SymbolTable<'a> {
-    functions: HashMap<&'a str, (Type, IndexMap<&'a str, Type>)>,
-    tables: Vec<HashMap<&'a str, Type>>,
-    current_func: Option<&'a str>,
+T main() {
+    T m = 1;
+    assert(m);
+    return 0;
 }
 ```
 
-`SymbolTable` has three fields. `functions` maps a function name to a 2-tuple containing the return type and an `IndexMap` (a hashmap which preserves the insertion order) mapping parameter names to their types. `tables`
-is a `vector` containing `HashMap`s which map local variables to their types in each scope. When the resolver enters a new scope, it will push a new `HashMap` into `tables`, and when it leaves the current scope, it will pop a `HashMap` from `tables`. `current_func` contains the name of the function the resolver is currently looking into.
 
-The general algorithm of resolver is stated below in pseudo code where `generic_ast` is the output of the parser and `ast` is the output of the resolver. Notice we first load all function definitions regardless of their actual definition order so we have maximum information to perform type inference.
 
-```
-input: generic_ast (a vector of functions)
-output: ast (a vector of functions with all dummy types resolved)
+3. Determine Trivial Types
 
-for each func in generic_ast do
-    store func's return type and parameters into SymbolTable.functions
-for each func in generic_ast do
-    set SymbolTable.current_func
-    enter a new scope
-    load parameters into the current scope
-    resolve func's body statement (more later)
-    update func's parameter types in SymbolTable.functions from local parameters
-    leave the current scope
-    clear SymbolTable.current_func
-for each func in generic_ast do
-    update func's return type and parameter types from SymbolTable.functions.
-return generic_ast
-```
+In Agile-C, "symbol" is the basic unit for type constraints. A symbol can be one of four kinds entites: local variables, function parameters, function returns, expressions. For the example program, we can list important symbols as follow, where `T` type means a dummy type that we need to infer.
 
-When resolving statements, we are actaully resolving expressions in them, and there are two statements where resolved expression types will be associated with some other type or variables. The first one is the `Return` statement where the type of the expression (`void` if no expression) will be associated with the function's return type. The second one is the `Def` statement where types of initializers will be associated with variables being defined.
+| Symbol ID | Description | Type |
+| --- | --- | --- |
+| 1 | parameter `expression` of `assert` | `int` |
+| 2 | return value of `main` | `T` |
+| 3 | variable `m` of `main` | `T` |
+| 4 | expression `1` of `main` | `Byte` |
+| 5 | expression `0` of `main` | `Byte` |
 
-This association process is known as "type unification", and conceptually, we can think type unification as trying to determine whether an assignment from a value with `type_right` to a variable with `type_left` is legal, and if these two types are not fully specified, whether we can make the assignment legal by further specifing their types. The resolver use a 3-step algorithm given below to determine whether a given unification is legal or not. Also notice in current implementation, every type object has an array flag and an pointer flag associated with it, so we can check whether a type (variable) is an array or a pointer.
+4. Constrain All Symbols
 
-```
-input: type_left, type_right
-output: (inferred_type_left, inferred_type_right) or error
+The next step is to find constraints for symbols whose type is still unknown. In essential, we may treat data flow of a program as a series of assignments. Suppose we have a expression `a = b`, reasonablely, we can assume two constraints: First, the type of symbol `a` should be at least as powerful as the type of symbol `b`. Second, the type of symbol `b` should be at most as powerful as the type of symbol `a`. Or in a more concise way, we say `a` is a upper bound of `b`, and `b` is a lower bound of `a`. This idea can be easily genalized to other language structures. For example, function calls are assignments of arguments to parameters and then assign the return value to some other variables, and a `return` statement is simply assign whatever expression on its right to the return symbol of this function. Now we can update the symbol table from the last section with upper and lower bounds included.
 
-if type_left == T
-    return (type_right, type_right)
-if type_right == T
-    return (type_left, type_left)
-if type_left == Void and type_right == Void
-    return (type_left, type_right)
-if type_left and type_right are not both arrays or pointers
-    return error
-if the combination of type_left and type_right is recorded in the table below
-    return (type_left, type_right)
-else
-    return error
-```
+| Symbol ID | Description | Type | Upper Bound | Lower Bound |
+| --- | --- | --- |
+| 1 | parameter `expression` of `assert` | `int` | `Any` | 3 |
+| 2 | return value of `main` | `T` | `Any` | 5 |
+| 3 | variable `m` of `main` | `T` | 1, 4 | 4 |
+| 4 | expression `1` of `main` | `Byte` | 3 | `Nothing` |
+| 5 | expression `0` of `main` | `Byte` | 2 | `Nothing` |
 
-| `type_left` | `type_right` |
-| --- | --- |
-| `char` | `char` |
-| `short` | `char` or `short` |
-| `unsigned short` | `char` or ` unsigned short` |
-| `int` | `char` or `short` or `unsigned short` or `int` |
-| `unsigned int` | `char` or `short` or ` unsigned short` or `unsigned int` |
-| `long` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` |
-| `unsigned long` | `char` or `short` or ` unsigned short` or `int` or `unsigned int` or `unsigned long` |
-| `float` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` or `unsigned long` or `float` |
-| `double` | `char` or `short` or `unsigned short` or `int` or `unsigned int` or `long` or `unsigned long` or `float` or `double` |
+First notice a type bound can be either a type (for example `Any`) or another symbol. Also notice that symbol 3 is bounded from both direction by symbol 4, which means they should have exactly the same type, which is just what a assignment expression means.
 
-Then we need to resolve expressions to obtain `type_right`. The resolver will first recursively destructure an expression back to five primary expressions: `Ident`, `IntConst`, `FloatConst`, `CharConst`, and `StrConst`.
+5. Resolve Type Bounds
+ Resolving is a iterative process, we look through every symbol to check if all symbols that act as its upper or lower bounds have had a determined concrete type. If so, we unify all upper bounds into a single type, say `upper`, and unify all lower bounds into another single type, say `lower`, then unify `upper` and `lower` to a final concrete type.
 
-For `Ident`, the resolver will retrieve its type from `SymbolTable` and if its type is `T`, it will be marked as a `generic_ident`. Each time the resolver successfully performs a type unification, it will update type information for all `generic_ident` involved. For `IntConst`, the resolver will pick the "narrowest" integer type that the literal fits. All interger types we support now are listed below from the narrowest (top) to the widest (bottom). For `FloatConst`, the same process applies and available types are also given below. Then `CharConst` will be assigned type `char` and `StrConst` will be assigned type `char` with its pointer flag set.
+Let's pretend we are the Resolver and check every symbol for the first time.
 
-```
-Integer Types:
-    short
-    unsigned short
-    int
-    unsigned int
-    long
-    unsigned long
+- Symbol 1 has a undertermined bound, i.e. symbol 3, stop resolving.
+- Symbol 2 is bounded by `Any` and `Byte` (symbol 5), so we determine its type should by `Byte`.
+- Symbol 3 is bounded by `Byte` (unifying symbol 1 and 4) and `Byte` (symbol 4), so we determine its type should by `Byte`.
+- Symbol 4 is bounded by `Byte` (symbol 3) and `Nothing`. We also notice it has had a determined type `byte`, which perfectly lays between this interval.
+- Symbol 5 is bounded by `Byte` (symbol 2) and `Nothing`. We also notice it has had a determined type `byte`, which perfectly lays between this interval.
 
-Floating Type:
-    float
-    double
+After the first iterative, types for all symbols are determined and types for symbol 2-5 are also checked. Now let's go to the second iteration.
+
+- Symbol 1 is bounded by `Any` and `Byte` (symbol 3). We also notice it has had a determined type `Int`, which perfectly lays between this interval.
+- Other symbols does not change.
+
+In the second iteration, types for all symbols are determined and checked, and we are done!
+
+6. Heuristic Resolving
+
+However, in more complicated programs, there is often some kind of reference loop. Let's look a slightly more complex program below.
+
+```C
+#include <assert.h>
+
+identity(n) {
+    return n;
+}
+
+main() {
+    m = 1;
+    assert(identity(m));
+    return 0;
+}
 ```
 
-After that, these primary expressions will be combined into all other expressions by various operators. It will take too much space to list all specific rules, so we only list the most fundamental rules below. Notice "M is compatible with N" means a type unification process using N as its `type_left` and M as its `type_right` will succeed.
+Now the problem is in the function call to `identity` will cause variable `m` and parameter `n` refer to each other as type bounds. The system will converge (cannot not make further deduction) without actually determine the type of `m` and `n`!
 
-- Position where a number is required should have a type that is compatible with `double`.
-- Position where a bool is required should have a type that is compatible with `int`.
-- Prefix operator `*` will clear the pointer flag of whatever type the following epression has.
-- Prefix operator `&` will set the pointer flag of whatever type the following epression has.
-- Indexes to arrays are required to be compatible with `long` or `unsigned long`, and the type of the whole index expression is the same as the array itself with the array flag cleared.
-- Aruguments in a functions call are required to be compatible with corresponding parameters in the corresponding function definition.
-- All expressions in a array initializer list should be compatible with a single type, which will be the type of the array with its array flag set.
+How we solve this problem is to add a little heuristic. Specifically, after the Resolver first converge, we will try to resolve each unknown symbol again, ignoring all undetermined type bounds. Each time the type of a unknown symbol is determined by heuristic resolving, we will try to rerun the resolving process again until it converges again.
+
+For example, `m` is bounded by a numerical literal and `n`. Now we ignore `n`, then `m` is determined to be `Byte`, and the loop is break. Furthermore, the Resolver will rerun the whole checking process to make sure `Byte` actually fits all type bounds.
+
+## Type Inference for some Special Cases
+
+The six steps we just talks about can handle such a large set of program, but there are still some pitfalls need extra processing.
+
+1. Infix Expression
+
+Now let's make our program a little more complex.
+
+```C
+#include <assert.h>
+
+add_one(n) {
+    return n + 1;
+}
+
+main() {
+    m = 1;
+    assert(add_one(m));
+    return 0;
+}
+```
+
+Now we have a infix expression in `add_one`. So what is the type relationship between `n`, `1`, and `n + 1`? Intuitively, the type of `n + 1` should be the more powerful type of `n` and `1`, but we cannot represent this relationship by upper and lower type bounds.
+
+We add a special field for each infix expression symbol, containing symbols of its left and right operend. When the Resolver resolves a symbol with this field set, the Resolver will pick the more powerful type from two operends as the overall type of the infix expression.
+
+2. Pointer, Dot Operator, Arraw Operator Transformation
+
+Now let's make our program a little more complex.
+
+```C
+#include <assert.h>
+
+add_one_ptr(n) {
+    return *n + 1;
+}
+
+main() {
+    m = 1;
+    assert(add_one_ptr(&m));
+    return 0;
+}
+```
+
+Now for expression symbol `*n`, we will have conflict type bounds. How? First, consider if we want to constrain this expression by its relationship with symbol `n`, we are actually adding a type bound of some kinds of pointer. However, if we want to constrain this expression by its relationship with numerical expression `1`, we are actually adding a type bound of some kinds of interger. The problem is this expression takes a symbol of some pointer type and transform it into the type this pointer is pointing to.
+
+We add a special field to tell Resolver to automatically add or remove pointer wrapper for individual type bounds when encounter such symbols. For example, `*n` is bounded by `n` of type `Pointer<Byte>` and `1` of Type `Byte`. the Resolver will remove the `Pointer` wrapper of `n` and now these two types check.
+
+Similarly, we can handle the dot operator (`structure.member`) and the arrow operator (`structure->member`).
 
 
 ## Grammar
