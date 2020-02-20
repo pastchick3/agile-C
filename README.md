@@ -20,13 +20,9 @@ Following sections are divided into three parts: First, we will walk you through
 
 ## Getting Started
 
-### Installing
-
 Agile-C is written in pure Rust and distributed as a single executable file available in the root directory of the project named "agile_c.exe".
 
-### Usage
-
-1. Hello, world!
+### Hello, world!
 
 In whatever folder you like, create `test.c` and type the following C code.
 
@@ -53,7 +49,7 @@ $ ./test.exe
 
 Now you should find "Hello, world!" appears in your screen.
 
-2. Invoke GCC with more arguments
+### Invoke GCC with more arguments
 
 You can provide more arguments to GCC by using `args` subcommand. For example, the following command will print the version information of GCC.
 
@@ -61,80 +57,88 @@ You can provide more arguments to GCC by using `args` subcommand. For example, t
 ./agile_c.exe --gcc -i ./test.c -o ./test.exe args --version
 ```
 
-3. Basic C features
+### Basic C features
 
 Agile-C supports the most commonly used features of C. Change `test.c` to the following and recompile it to see what you get!
 
+```C
+#include <stdio.h>
+
+struct Counter {
+    int num;
+};
+
+void add(struct Counter *cnt, int number) {
+    cnt->num += number;
+}
+
+int main(void) {
+    struct Counter cnt = { .num = 0 };
+    int numbers[] = { 1, 2 };
+    for (int i = 0; i < 2; ++i) {
+        add(&cnt, numbers[i]);
+    }
+    printf("%i", cnt.num);
+    return 0;
+}
 ```
 
+### Type Inference
+Now let's omit tedious type declaration! Copy the abbreviated version below to `test.c` and rerun the program. You will find the program just runs!
+
+```C
+#include <stdio.h>
+
+struct Counter {
+    int num;
+};
+
+add(cnt, number) {
+    cnt->num += number;
+}
+
+main() {
+    struct Counter cnt = { .num = 0 };
+    numbers = { 1, 2 };
+    for (i = 0; i < 2; ++i) {
+        add(&cnt, numbers[i]);
+    }
+    printf("%i", cnt.num);
+    return 0;
+}
+```
 
 ---
+## Features
 
+The formal syntax, type hierarchy, and some notes related to the implementation details are given in the last [Specification](#Specification). Here we just quickly go through what Agile-C is capable of, and a few quirks you are likly to run into.
+
+- Agile-C supports all kinds of literals, including string, character, numerical. However, you are not allow to use integer suffix (`L`).
+- Most expressions and statements are supported.
+- Most primary types are supported, but not specifier like `const`.
+- Array type is supported, and the only valid initialization syntax is `arr = { 1 }`. The designated initializer for arrays is not supported.
+- Structures are supported, but the struct definition must be complete (all members must have known types), and the declaration of struct type cannot be omitted. The only valid initialization syntax is `strcture = { .member = 1 }`, and all members must be explicitly initialized.
+- Functions are supported.
+- For macros, only `#include` is supported.
+
+---
 ## Type Inference
 
+In short, the language Agile-C is a weakly and statically typed subset of C, with a class-based type inference system.
+
+Agile-C (or in general, C) is weakly typed because it does perform certain kinds of implicit type conversions. For example, a C programmer may feel comfartable assigning a `int` to a `long`, but this assignment will be rejected in stronly typed language (like Rust). What happens here is the C compiler implicitly promote the `int` to `long` and then perform the assignment.
+
+Agile-C (or in general, C) is statically typed, which means most, if not all, of its type checking happens during the compilation time. On the contrary, dynamic typing language, like Python, does not really cares about the type of a variable until this variable is actually used in runtime. Then the Python interpreter will check the type of this variable actually fulfill the requirement, in the runtime.
+
+Finally, a class-based is borrowed from termilogies used to discuss how a OOP language is implemented. When it talks to OOP language, there are generally two basic approches, class-based or trait-based. The class-based is relatively familiar, programmers define classes, which encapsulate methods and states, and inherit different classes to form a class hierarchy for code reuse. Traits, however, are interfaces that define methods needed to implement this trait without the notion of internal states. Programmers enhence a structure, which contains states and data by implementing various traits for it.
+
+So what does a "class-based type inference system" means. Let's look at a example. For instance, there is a expression `a + b`, then you know variable `a` and `b` should support the operator `+`. For a class-based system, this means "`a` and `b` should belongs to a set of classes that support the `+` operator". For C, this generally means all numerical types (remember we do not have operator overloading in C). Then, how do we represent "a type that is numerical" in a type hierarchy? A simple answer is to define a common bottom subtype of all numerical types and a common supertype of all numerical types. This is exactly the approch Agile-C takes: Agile-C uses `double` as the common super type, and defines a new type `byte` as the common numerical subtype. So `a + b` is translated to constraint "`a` and `b` should be a type that is the supertype of `byte` but subtype of `double`". For trait-based system, `a + b` simply means `a` and `b` should satisfy certain trait, let say `Add`. Now we can see, trait-based approach is much cleaner, without intervining with dedicate type hierarchy and operator overloading. However, Agile-C still takes the class-based approach because C has no notion of traits, so we have to define traits and implements from scrach.
+
 ---
 
-## Module Structure
-
-## Caution
-int size
-C: same definition, different type
-agile_c: same name, later one will overwrite
-
-## Grammer
 
 
-
-## Introduction
-
-C programming language is an explicitly typed language, which means every type declaration must be spell out explicitly. This process is cumbersome and error-prone especially when complex types like pointers, structures, and arrays are involved.
-
-Intuitively, in most cases, the compiler should be able to obtain enough information from the context to determine the concrete type of a specific variable. [Melo et al.](https://dl.acm.org/citation.cfm?id=3158117) proposes a type inference engine for C that can infer concrete type for type declarations that do not have actual definitions. However, this engine only works when all type declarations are in place, which makes this engine a great fit for static code analysis for incomplete code segments but not so useful otherwise.
-
-Agile C is a type inference transpiler that will first parse and analyze a program and insert dummy type parameters for any missing declarations. Then it will use type inference algorithms to further determine concrete types of these parameters. Finally, the transpiler will output a new file which can be directly fed into a normal C compiler.
-
-The following 3 code segments show how a C function is transformed after each step.
-
-``` C
-// An expample input function
-func(a) {
-    b = 1.1;
-    return a + b;
-}
-```
-
-``` C
-// The function after parsing
-T func(T a) {
-    T b = 1.1;
-    return a + b;
-}
-```
-
-``` C
-// The output function
-float func(float a) {
-    float b = 1.1;
-    return a + b;
-}
-```
-
-## Quick Start
-
-Agile C is written in pure [Rust](https://www.rust-lang.org/), and is distributed as a single binary named `agile_c.exe` (in the root directory). An example command is shown below.
-
-```
-.\agile_c.exe --input .\input.c --output .\output.c
-```
-
-That's all. Pretty simple. Following sections provide more in-depth explanations of how Agile C works.
-- [Architecture](#Architecture) shows the module structure of Agile C and the general workflow.
-- [Parsing](#Parsing) describes the general idea about how Agile C parses a program and inserts dummy type parameters.
-- [Resolving](#Resolving) provides a detailed explanation about how Agile C perform type inference.
-- [TODO](#TODO) lists features and bugs that I am currently working on.
-- [Grammar](#Grammar) lists currently supported C grammer in BNF.
-
-## Architecture
+## Specification
 
 Agile C mainly consists of 5 components listed as below:
 
@@ -158,6 +162,8 @@ For functions' return types and parameters, generally the parser knows there sho
 For variable definitions, the parser will maintain a environment object for each scope, which is a hash set containing name of variables defined in the current scope. When the parser produces a assignment expression, it will search those environment objects, and if the variable being assigned is not defined yet, the parser will transform this assignment expression into a definition statement with a dummy type specifier `T`.
 
 ## Resolving
+
+![type hierarchy](./type_hierarchy.jpg)
 
 Type inference is in essential an automatic detection of the data type of expressions and variables given some context information including literals whose types are trivially known, variables whose types are known, and constraints imposed by language semantics.
 
@@ -257,27 +263,6 @@ After that, these primary expressions will be combined into all other expression
 - Aruguments in a functions call are required to be compatible with corresponding parameters in the corresponding function definition.
 - All expressions in a array initializer list should be compatible with a single type, which will be the type of the array with its array flag set.
 
-## TODO
-
-param ...
-param void
-
-array initlist must be const
-
-lost env when final resolve return/param types
-init list for arrays/structures (no nest)
-
-char? Num
-Bool? Num + ptr -> Bool -> T > char
-Array? const
-Pointer? invar
-Struct? invar
-literal? T > Tmin
-
-char <- unsigned short <- unsigned int <- unsigned long <- float <- double
-^            ^                 ^                            |
-|            |                 |                            |
-└ short <- int <------------ long <-------------------------┘
 
 ## Grammar
 
