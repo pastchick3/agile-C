@@ -157,7 +157,7 @@ A diagram illustrating the type hierarchy of Agile-C is shown below. Notice this
 In this section we will explore six steps Agile-C takes to perform type inference and also how Agile-C handle some special cases with a few examples.
 
 <!-- omit in toc -->
-### Preprocessing
+### Preprocess
 
 ``` C
 #include <assert.h>
@@ -183,7 +183,7 @@ main() {
 ```
 
 <!-- omit in toc -->
-### Parsing
+### Parse
 
 Agile-C implements a Pratt parser (a operator-precedence parser), which associates semantics with tokens instead of grammar rules, with small tweaks on how it parses potentially missing type declarations.
 
@@ -255,7 +255,7 @@ After the first iteration, types for all symbols are known and types for symbol 
 Now, types for all symbols are determined and checked.
 
 <!-- omit in toc -->
-### Heuristic Resolving
+### Resolve Heuristically
 
 However, more complex programs generally have mutual references between symbols with unknown types. Let's add an `identity` function to our example program.
 
@@ -280,7 +280,7 @@ How we solve this problem is to add a little heuristic. Specifically, after Agil
 For example, `m` is bounded by a numerical literal (`byte`) and `n`. Now we ignore `n`, then `m` is determined to be `Byte`, and the resolving process will start again.
 
 <!-- omit in toc -->
-### Some Special Cases
+### Handle Special Cases
 
 The six steps we just talks about can handle a large set of programs, but there are still some special cases that need extra processing.
 
