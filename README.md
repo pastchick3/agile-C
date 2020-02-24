@@ -23,7 +23,7 @@ I design and implement Agile-C as my bachelar graduation project, which provides
 
 Agile-C is a transpiler, which consumes a C sourse file that omits certain type declarations and outputs a valid C sourse file. You can also directly invoke GCC using a command-line flag to get the final executable file instead.
 
-During the rest of the document, we will [get you started](#Getting%20Started) and introduce how many C [features](#Features) are supported. Then we will briefly talks about the [type system](#Overview%20of%20Agile-C's%20Type%20System) of Agile-C and how it performs [type inference](#Overview%20of%20Agile-C's%20Type%20Inference%20Algorithm) before we define the formal [grammar](#Grammar).
+During the rest of the document, we will first get you started and introduce how many C features are supported. Then we will briefly talk about the type system of Agile-C and how it performs type inference before we define the formal grammar.
 
 ## Getting Started
 
@@ -345,7 +345,7 @@ The majority of the grammar definition is based on [C18](https://www.iso.org/sta
                 | "u" | "v" | "w" | "x" | "y" | "z"
                 | "_";
 <digit> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
-<escape> ::= "\n" | "\"" | "\'";
+<escape> ::= "\n" | "\"" | '\'';
 <type-specifier> ::= "void" | "char" | "short" | "int" | "long"
                     | "float" | "double" | "signed" | "unsigned";
 
