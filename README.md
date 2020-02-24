@@ -345,7 +345,6 @@ The majority of the grammar definition is based on [C18](https://www.iso.org/sta
                 | "u" | "v" | "w" | "x" | "y" | "z"
                 | "_";
 <digit> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
-<escape> ::= "\n" | "\"" | '\'';
 <type-specifier> ::= "void" | "char" | "short" | "int" | "long"
                     | "float" | "double" | "signed" | "unsigned";
 
@@ -353,7 +352,7 @@ The majority of the grammar definition is based on [C18](https://www.iso.org/sta
 <identifier> ::= <non-digit> (<digit> | <non-digit>)*;
 <int-constant> ::= ["+" | "-"] <digit>+;
 <floating-constant> ::= ["+" | "-"] <digit>* "." <digit>*;
-<char-constant> :: "'" (<non-digit> | <digit> | " " | <escape>) "'";
+<char-constant> :: "'" (<non-digit> | <digit> | " " | "\n") "'";
 <string-constant> ::= "\"" <char-constant>* "\"";
 
 
