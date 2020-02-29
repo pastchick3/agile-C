@@ -134,7 +134,7 @@ Here we quickly go through what Agile-C is capable of and a few quirks that you 
 - Most expressions and statements are supported.
 - Most primary types are supported, including structures, pointers, and arrays, but excluding specifiers like `const`.
 - The only valid initialization syntax for arrays is the brace initialization without designated initializers. For example, `arr = { 1 }` works fine, but `arr = { [0]=1 }` does not work.
-- Structures are supported, but the struct definition must be complete (all members must have known types), and the declaration of structure types cannot be omitted. The only valid initialization syntax is the brace initialization with designated initializers (`strcture = { .member = 1 }`), and all members must be explicitly initialized.
+- Structures are supported, but the struct definition must be complete (all members must have known types), and the declaration of structure types cannot be omitted. The only valid initialization syntax is the brace initialization with designated initializers (`strcture = { .member=1 }`), and all members must be explicitly initialized.
 - Functions are supported, and the use of `void` for empty parameter lists is also supported (a literally empty parameter list means this function can take any number of arguments).
 - For macros, only `#include` is supported.
 
@@ -142,7 +142,7 @@ Here we quickly go through what Agile-C is capable of and a few quirks that you 
 
 In short, Agile-C is a weakly and statically typed subset of C, with a constraint-based type inference system.
 
-Agile-C (or in general, C) is weakly typed because it performs implicit type conversions. For example, a C programmer may feel comfortable assigning a `int` to a `long`, but this assignment will be rejected in stronly typed languages (like Rust). What happens here is the C compiler implicitly promotes the `int` to `long` and then performs the assignment.
+Agile-C (or in general, C) is weakly typed because it performs implicit type conversions. For example, a C programmer may feel comfortable assigning a `int` to a `long`, but this assignment will be rejected in strongly typed languages (like Rust). What happens here is the C compiler implicitly promotes the `int` to `long` and then performs the assignment.
 
 Agile-C (or in general, C) is statically typed, which means most, if not all, of its type checking happens during the compile time. On the contrary, dynamically typed languages, like Python, does not really care about the type of a variable until this variable is actually used in runtime.
 
