@@ -13,15 +13,15 @@ A Type Inference Transpiler for the C Programming Language
 
 ## Motivation
 
-Type inference now is an important feature for many modern programming languages, aiming to reduce the cognitive load of programmers while not giving up the benefits of static type systems. Type inference systems take many forms, ranging from the famous Hindley-Milner system used in Haskell, local type inference in Rust and Scala, to type deduction for variables in C++ and Java.
+Type inference now is an important feature for many modern programming languages, aiming to reduce the cognitive load of programmers while not sacrificing benefits of static type systems. Type inference systems take many forms, ranging from the famous Hindley-Milner system used in Haskell, local type inference in Rust and Scala, to type deduction for variables in C++ and Java.
 
-However, although the general idea of type inference is quite straightforward, there is a large gap between the theory and a really functional type inference system which is tightly binded to the target language and has to handle tons of cornor cases. Nowadays, it is not easy to find books that take a practical approach (i.e., actually implement a fully functional type inference system) while accessable to programmers who only have average knowledge in programming language theory.
+However, although the general idea of type inference is quite straightforward, there is a large gap between the theory and a really functional type inference system which is tightly bound to the target language and has to handle tons of corner cases. Nowadays, it is not easy to find books that take a practical approach (i.e., actually implement a fully functional type inference system) while accessible to programmers who only have average knowledge in programming language theory.
 
-I design and implement Agile-C as my bachelar graduation project, which provides basic type inference for most commen used C features, to get a impression about how type systems and type inference work before I dive into more serious literature.
+I design and implement Agile-C as my bachelor graduation project, which provides basic type inference for most commonly used C features, to get an impression about how type systems and type inference work before I dive into more serious literature.
 
 ## Introduction
 
-Agile-C is a transpiler, which consumes a C sourse file that omits certain type declarations and outputs a valid C sourse file. You can also directly invoke GCC using a command-line flag to get the final executable file instead.
+Agile-C is a transpiler, which consumes a C source file that omits certain type declarations and outputs a valid C source file. You can also directly invoke GCC using a command-line flag to get the final executable file instead.
 
 During the rest of the document, we will first get you started and introduce C features that are currently supported. Then we will briefly talk about the type system of Agile-C and how it performs type inference before we define the formal grammar.
 
@@ -128,13 +128,13 @@ main() {
 
 ## Features
 
-Here we quickly go through what Agile-C is capable of and a few quirks that you are likly to run into.
+Here we quickly go through what Agile-C is capable of and a few quirks that you are likely to run into.
 
-- Agile-C supports all kinds of literals, including strings, characters, and numbers. However, you are only allow to use decimals without integer suffixes or scientific notations (i.e. `100L` or `1e3`).
+- Agile-C supports all kinds of literals, including strings, characters, and numbers. However, you are only allowed to use decimals without integer suffixes or scientific notations (i.e. `100L` or `1e3`).
 - Most expressions and statements are supported.
-- Most primary types are supported, including structures, pointers, and arrays, but excluding specifiers like `const`.
+- Most C types are supported, including structures, pointers, and arrays, but excluding specifiers like `const`.
 - The only valid initialization syntax for arrays is the brace initialization without designated initializers. For example, `arr = { 1 }` works fine, but `arr = { [0]=1 }` does not work.
-- Structures are supported, but the struct definition must be complete (all members must have known types), and the declaration of structure types cannot be omitted. The only valid initialization syntax is the brace initialization with designated initializers (`strcture = { .member=1 }`), and all members must be explicitly initialized.
+- Structures are supported, but the struct definition must be complete (all members must have known types), and the declaration of structure types cannot be omitted. The only valid initialization syntax is the brace initialization with designated initializers (`structure = { .member=1 }`), and all members must be explicitly initialized.
 - Functions are supported, and the use of `void` for empty parameter lists is also supported (a literally empty parameter list means this function can take any number of arguments).
 - For macros, only `#include` is supported.
 
@@ -169,7 +169,7 @@ main() {
 }
 ```
 
-Suppose we have a really simple program as above. The first thing Agile-C does is to consult a internal module to get complete function declarations of `assert.h` and insert them into the source file, so it can later match the usage of function `assert` to its declaration. The transformed program is shown as below.
+Suppose we have a really simple program as above. The first thing Agile-C does is to consult an internal module to get complete function declarations of `assert.h` and insert them into the source file, so it can later match the usage of function `assert` to its declaration. The transformed program is shown as below.
 
 ``` C
 #include <assert.h>
@@ -185,15 +185,11 @@ main() {
 <!-- omit in toc -->
 ### Parse
 
-Agile-C implements a Pratt parser (a operator-precedence parser), which associates semantics with tokens instead of grammar rules, with small tweaks on how it parses potentially missing type declarations.
+Agile-C implements a Pratt parser (an operator-precedence parser), which associates semantics with tokens instead of grammar rules, with small tweaks on how it parses potentially missing type declarations.
 
-Now agile C can complete missing type declarations in three places: the return type of a function, types for function parameters, and types for variable definitions.
+Now agile C can complete missing type declarations in three places: the return type of a function, function parameters, and variable definitions. For functions' return types and parameters, the parser knows where types should be, so if the parser fails to find any type there, the parser will insert a dummy type instead. For variable definitions, the parser will maintain an environment object for each lexical scope, containing names of variables defined in each scope. When the parser produces an assignment expression, it will search those environment objects, and if the variable being assigned to is not defined yet, the parser will transform this assignment expression into a definition statement with a dummy type.
 
-For functions' return types and parameters, the parser knows where types should be, so if the parser fails to find any type there, the parser will insert a dummy type instead.
-
-For variable definitions, the parser will maintain a environment object for each lexical scope, containing names of variables defined in each scope. When the parser produces an assignment expression, it will search those environment objects, and if the variable being assigned is not defined yet, the parser will transform this assignment expression into a definition statement with a dummy type.
-
-For instance, the example program after parsing is shown below. Notice the parser add dummy `T` types for the return type of `main` and variable `m`.
+The example program after parsing is shown below. Notice the parser add dummy `T` types for the return type of `main` and the variable `m`.
 
 ``` C
 #include <assert.h>
@@ -222,7 +218,7 @@ In Agile-C, symbols are basic units for type inference. There are four kinds of 
 <!-- omit in toc -->
 ### Constrain All Symbols
 
-The next step is to find constraints for all symbols. Conceptually, we may treat the data flow of a program as a series of assignments. Suppose we have a expression `a = b`, we can conclude with two constraints: First, the type of the symbol `a` should be at least as powerful as the type of the symbol `b`. Second, the type of the symbol `b` should be at most as powerful as the type of the symbol `a`. In a more concise way, we say `a` is a upper bound of `b`, and `b` is a lower bound of `a`. This idea can be easily generalized to other control flow. For example, function calls are assignments from arguments to parameters plus an assignment from the return value to some other variable. Using this idea, we can expand the symbol table from the last section with upper and lower bounds included.
+The next step is to find constraints for all symbols. Conceptually, we may treat the data flow of a program as a series of assignments. Suppose we have an expression `a = b`, we can conclude with two constraints: First, the type of the symbol `a` should be at least as powerful as the type of the symbol `b`. Second, the type of the symbol `b` should be at most as powerful as the type of the symbol `a`. In a more concise way, we say `a` is an upper bound of `b`, and `b` is a lower bound of `a`. This idea can be easily generalized to other control flow. For example, function calls are assignments from arguments to parameters plus an assignment from the return value to some other variable. Using this idea, we can expand the symbol table from the last section with upper and lower bounds included.
 
 | Symbol ID | Description | Type | Upper Bound | Lower Bound |
 | --- | --- | --- | --- | --- |
@@ -241,11 +237,11 @@ After all type constraints are found, Agile-C will iteratively resolve them for 
 
 Let's do the first iteration manually as an example.
 
-- Symbol 1 has a undertermined bound, i.e. symbol 3.
+- Symbol 1 has an undetermined bound, i.e. symbol 3.
 - Symbol 2 is bounded by `Any` and `Byte` (symbol 5), so we determine its type should by `Byte`.
 - Symbol 3 is bounded by `Byte` (unifying symbol 1 and 4) and `Byte` (symbol 4), so we determine its type should by `Byte`.
-- Symbol 4 is bounded by `Byte` (symbol 3) and `Nothing`. We also notice it has had a determined type `byte`, which perfectly lays between this interval.
-- Symbol 5 is bounded by `Byte` (symbol 2) and `Nothing`. We also notice it has had a determined type `byte`, which lays perfectly in this interval.
+- Symbol 4 is bounded by `Byte` (symbol 3) and `Nothing`. We also notice it has had a determined type `Byte`, which perfectly lays between this interval.
+- Symbol 5 is bounded by `Byte` (symbol 2) and `Nothing`. We also notice it has had a determined type `Byte`, which lays perfectly in this interval.
 
 After the first iteration, types for all symbols are known and types for symbol 2-5 are also checked (compatible with constraints imposed on them). Now let's begin the second iteration.
 
@@ -277,12 +273,12 @@ Now the problem is the function call to `identity` will cause variable `m` and p
 
 How we solve this problem is to add a little heuristic. Specifically, after Agile-C first converges, it will try to resolve each unknown symbol again, ignoring all undetermined type bounds.If doing so does make the type of this symbol clear, Agile-C will try to rerun the resolving process again until it converges again, which also makes sure the type produced by heuristic is indeed compatible with all constraints.
 
-For example, `m` is bounded by a numerical literal (`byte`) and `n`. Now we ignore `n`, then `m` is determined to be `Byte`, and the resolving process will start again.
+For example, `m` is bounded by a numerical literal (`Byte`) and `n`. Now we ignore `n`, then `m` is determined to be `Byte`, and the resolving process will start again.
 
 <!-- omit in toc -->
 ### Handle Special Cases
 
-The six steps we just talks about can handle a large set of programs, but there are still some special cases that need extra processing.
+The six steps we just talk about can handle a large set of programs, but there are still some special cases that need extra processing.
 
 - Infix Expression
 
@@ -302,11 +298,11 @@ main() {
 }
 ```
 
-Now we have an infix expression in `add_one`. So what is the type relationship between `n`, `1`, and `n + 1`? Intuitively, the type of `n + 1` should be the more powerful type between `n` and `1`, but we cannot represent this constraint by upper and lower type bounds.
+Now we have an infix expression in `add_one`. The next question is what the type relationship between `n`, `1`, and `n+1` is? Intuitively, the type of `n+1` should be the more powerful type between `n` and `1`, but we cannot represent this constraint by upper and lower type bounds.
 
-To solve this problem, Agile-C will add a special field to each infix expression symbol, containing symbols of its left and right operands. Then in the resolving process, Agile-C can pick the more powerful type from its operands as the overall type of the whole expression.
+To solve this problem, Agile-C adds a special field to each infix expression symbol, containing symbols of its left and right operands. Then in the resolving process, Agile-C can pick the more powerful type from its operands as the overall type of the whole expression.
 
-- Pointer, Dot Operator, and Arraw Operator Transformation
+- Pointer, Dot Operator, and Arrow Operator Transformation
 
 Suppose we want `add_one` to work with pointers.
 
@@ -324,9 +320,9 @@ main() {
 }
 ```
 
-Now for expression symbol `*n`, we will have conflict type bounds. How? First, we want to constrain this expression by its relationship with symbol `n`, so we add a type bound of some kinds of pointers. Then, we want to constrain it by its relationship with numerical expression `1`, so now we add a type bound of some kinds of intergers, which conflicts with the last constrain. The problem is this expression takes a symbol of some pointer type but transform it into the type this pointer is pointing to.
+Now for expression symbol `*n`, we will have conflict type bounds. How? First, we want to constrain this expression by its relationship with symbol `n`, so we add a type bound of some kinds of pointers. Then, we want to constrain it by its relationship with numerical expression `1`, so now we add a type bound of some kinds of integers, which conflicts with the last constrain. The problem is this expression takes a symbol of some pointer type but transform it into the type this pointer is pointing to.
 
-To handle pointers, Agile-C adds a special flag so it knows to automatically add or remove pointer wrappers for individual type bounds. For example, `*n` is bounded by `n` of type `Pointer<Byte>` and `1` of Type `Byte`, and Agile-C will remove the `Pointer` wrapper of `n` and now these two types match.
+To handle pointers, Agile-C adds a special flag so it knows to automatically add or remove pointer wrappers for individual type bounds. For example, `*n` is bounded by `n` of type `Pointer<Byte>` and `1` of type `Byte`, and Agile-C will remove the `Pointer` wrapper of `n` and now these two types match.
 
 With similar methods, we can also handle dot operators (`structure.member`) and arrow operators (`structure->member`).
 
